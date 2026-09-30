@@ -9,7 +9,7 @@ export function cleanName(raw) {
     .replace(/[\u0000-\u001f\u007f<>]/g, '')
     .replace(/\s+/g, ' ')
     .trim()
-    .slice(0, 24);
+    .slice(0, 32);
   if (name.length < 2) throw new DomainError('Escribe tu nombre (mínimo 2 letras).');
   return name;
 }

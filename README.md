@@ -125,27 +125,28 @@ En el plan **Free**, el servicio se duerme tras 15 minutos sin tráfico. La prim
 
 1. En el computador del salón (o tu celular) abre `https://<tu-servicio>.onrender.com/moderador` (en local: `http://localhost:3000/moderador`).
 2. Escribe la **clave del moderador** y pulsa **Entrar**. El navegador la recuerda.
-3. En **Crear una sala nueva** deja el título o cámbialo (se ve en el proyector) y pulsa **Crear sala**. Aparece arriba un **código de 5 letras** (por ejemplo `KYDSF`): es el que escriben los estudiantes.
-4. En la barra superior tienes:
-   * **Copiar enlace**: el enlace directo para los estudiantes, para pegar en el chat del curso;
+3. En **Nueva sala** deja el título o cámbialo (se ve en el proyector) y pulsa **Crear sala**. Aparece un **código de 5 letras** (por ejemplo `KYDSF`): es el que escriben los estudiantes.
+4. El panel tiene cinco secciones: **Sala** (invitación y equipos), **En vivo**, **Resultados**, **Preguntas** y **Ajustes**. En el computador están en la barra lateral; en el celular, en la barra inferior. Arriba a la derecha siempre está el botón principal del momento (**Iniciar**, **Pausar**/**Reanudar**, **Revelar podio**) y una guía de pasos te indica qué sigue.
+5. Los accesos rápidos son:
+   * **Copiar enlace**: el enlace directo para los estudiantes, para pegar en el chat del curso (también al tocar el código);
    * **Ranking en vivo**: abre la vista de espectador en otra pestaña;
-   * **Abrir proyector**: abre la pantalla del salón con el QR.
-5. Si cierras la pestaña, al volver a `/moderador` la sala sigue ahí. En **Salas existentes** puedes abrirla o eliminar las de pruebas.
+   * **Proyector**: abre la pantalla del salón con el QR.
+6. Si cierras la pestaña, al volver a `/moderador` la sala sigue ahí. En **Salas guardadas** puedes abrirla o eliminar las de pruebas.
 
 ### Antes (30 a 10 minutos antes)
 
 1. Crea la sala como se explica arriba.
-2. Revisa la pestaña **Configuración**:
+2. Revisa la sección **Ajustes**:
    * tiempo por candado (por defecto 8 min);
    * modo de retroalimentación (por defecto *veredicto*: el equipo sabe si acertó, pero la explicación llega al cerrar el candado);
    * pesos de la nota (por defecto 70 % aciertos, 30 % velocidad).
-3. Pulsa **Abrir proyector** y lleva esa pestaña a la pantalla del salón (F11 para pantalla completa). Muestra el código, el QR y los estudiantes que van entrando.
-4. Si quieres ajustar preguntas, usa la pestaña **Banco** (ver sección 5).
+3. Pulsa **Proyector** y lleva esa pestaña a la pantalla del salón (F11 para pantalla completa). Muestra el código, el QR y los estudiantes que van entrando.
+4. Si quieres ajustar preguntas, usa la sección **Preguntas** (ver sección 5).
 
 ### Ingreso (unos 3 minutos)
 
 1. Los estudiantes escanean el QR o entran a la URL y escriben el código y su nombre.
-2. Cuando estén todos, en la pestaña **Equipos** pulsa **Armar equipos automáticamente**. Se hacen equipos de hasta 5 lo más parejos posible: 23 estudiantes quedan en 5, 5, 5, 4 y 4. Con 6 o más estudiantes ningún equipo queda de menos de 3. Los candados se reparten en rotación (equipo 1 → candado 1, …, equipo 5 → candado 1). También puedes fijar el número de equipos.
+2. Cuando estén todos, en la sección **Sala** pulsa **Armar al azar**. Se hacen equipos de hasta 5 lo más parejos posible: 23 estudiantes quedan en 5, 5, 5, 4 y 4. Con 6 o más estudiantes ningún equipo queda de menos de 3. Los candados se reparten en rotación (equipo 1 → candado 1, …, equipo 5 → candado 1). También puedes fijar el número de equipos.
 3. Si algo no te gusta, mueve estudiantes, renombra equipos o cambia el candado de un equipo. Quien llegue tarde se asigna solo al equipo con menos integrantes (se puede desactivar).
 
 ### Juego (8 minutos por defecto)
@@ -159,26 +160,26 @@ En el plan **Free**, el servicio se duerme tras 15 minutos sin tráfico. La prim
 5. Para seguir los puntajes sin arruinar el suspenso del proyector, abre **Ranking en vivo** en tu celular o portátil (pide la misma clave). Muestra:
    * el ranking provisional con la nota de cada equipo, calculada con la misma fórmula y desempates que el podio final;
    * aciertos, la velocidad que tendría el equipo si abriera ahora, y su **techo** (la mejor nota que todavía puede alcanzar);
-   * flechas ▲▼ cuando un equipo cambia de puesto;
+   * flechas cuando un equipo sube o baja de puesto;
    * los relojes de cada candado.
 
 ### Cierre (unos 5 minutos)
 
-1. Cuando todos los candados se cierran (abiertos o por tiempo), la partida termina sola. En el proyector pulsa **Revelar podio**: aparece con suspenso del 3.º al 1.º.
+1. Cuando todos los candados se cierran (abiertos o por tiempo), la partida termina sola. En el panel pulsa **Revelar podio** (el botón dorado de arriba a la derecha): el proyector lo muestra con suspenso del 3.º al 1.º.
 2. En el proyector, **Pregunta más difícil y debate** muestra las preguntas con menos aciertos y un minuto de cuenta regresiva para el debate "¿Qué fue lo más difícil?".
 3. Cada estudiante ve en su celular el desglose de su equipo, la revisión de sus respuestas con explicación y el botón **Mi certificado de Científico de Datos**, que se puede imprimir o guardar como PDF.
-4. En la pestaña **Resultados** descarga **CSV por equipo** y **CSV por estudiante** (se abren bien en Excel en español). **Informe PDF** abre el informe imprimible, que puedes guardar como PDF desde el navegador.
+4. En la sección **Resultados** descarga **CSV por equipo** y **CSV por estudiante** (se abren bien en Excel en español). **Informe PDF** abre el informe imprimible, que puedes guardar como PDF desde el navegador.
 
 ### Si algo sale mal
 
 | Situación | Qué hacer |
 | --- | --- |
 | Un estudiante cerró la pestaña o recargó | Que vuelva a abrir la misma URL en el mismo celular y navegador: la sesión se recupera sola. |
-| Un estudiante tuvo que cambiar de celular | Que entre de nuevo con el código (aparecerá como "Nombre (2)"). En **Equipos**, muévelo a su equipo y expulsa la sesión vieja. El progreso es del equipo, así que no se pierde nada. |
+| Un estudiante tuvo que cambiar de celular | Que entre de nuevo con el código (aparecerá como "Nombre (2)"). En **Sala**, muévelo a su equipo y expulsa la sesión vieja. El progreso es del equipo, así que no se pierde nada. |
 | Un equipo está trabado porque el capitán no responde | Después de 30 s cualquier integrante ve el botón **Tomar el mando**. |
 | Se cayó el Wi-Fi del salón | Pausa la partida; al volver la red, todos se reconectan solos. |
 | El servidor se reinició | La sala vuelve en pausa con todo el progreso; pulsa **Reanudar**. |
-| Se necesita más tiempo | **+30 s / +1 min** en la pestaña Partida, para un candado o para todos. |
+| Se necesita más tiempo | **+30 s / +1 min** en la sección En vivo, para un candado o para todos. |
 | Hay que empezar de nuevo | **Reiniciar** vuelve a la sala de espera conservando jugadores y equipos. |
 
 ---
@@ -187,13 +188,13 @@ En el plan **Free**, el servicio se duerme tras 15 minutos sin tráfico. La prim
 
 Hay dos formas de hacerlo:
 
-* **Desde el panel (pestaña Banco):**
+* **Desde el panel (sección Preguntas):**
   * editar enunciado, datos, pista, opciones, respuesta, tolerancia y explicación;
   * activar o desactivar, reordenar, duplicar o crear preguntas;
   * editar la historia de cada candado.
 
   Al guardar se valida todo y se aplica a las partidas **nuevas**; la partida en curso no cambia. Puedes descargar el banco en JSON, importar uno y restaurar el archivo original.
-* **Editando `data/questions.json`** y ejecutando `npm run validate:questions`. Los cambios guardados desde el panel tienen prioridad sobre el archivo hasta que pulses *Restaurar archivo*.
+* **Editando `data/questions.json`** y ejecutando `npm run validate:questions`. Los cambios guardados desde el panel tienen prioridad sobre el archivo hasta que pulses *Restaurar*.
 
 Formato de cada pregunta:
 

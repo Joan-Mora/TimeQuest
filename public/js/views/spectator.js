@@ -50,8 +50,8 @@ function Spectator({ modKey, code, onBadKey, onBadRoom }) {
   useKeepAlive(true);
   const conn = useConnection({ role: 'moderator', key: modKey }, {
     onEvent: (ev) => {
-      if (ev.type === 'opened') toast(`🔓 «${ev.name}» abrió el candado ${ev.lock} (${ordinal(ev.seq)})`);
-      if (ev.type === 'timeout') toast(`⏱ Tiempo agotado: «${ev.name}»`);
+      if (ev.type === 'opened') toast(`«${ev.name}» abrió el candado ${ev.lock} (${ordinal(ev.seq)})`, { icon: 'unlock' });
+      if (ev.type === 'timeout') toast(`Tiempo agotado: «${ev.name}»`, { icon: 'clock' });
     },
   });
 
@@ -90,7 +90,7 @@ function Spectator({ modKey, code, onBadKey, onBadRoom }) {
   </div>`;
 }
 
-function LockClocks({ mod }) {
+export function LockClocks({ mod }) {
   useTick(500, mod.phase === 'running');
   const used = new Set(mod.teams.map((t) => t.lock));
   return html`<div class="spec-clocks">
@@ -102,7 +102,7 @@ function LockClocks({ mod }) {
   </div>`;
 }
 
-function fromResults(results) {
+export function fromResults(results) {
   return results.teams.map((r) => ({
     teamId: r.teamId,
     name: r.name,
@@ -147,7 +147,7 @@ function Body({ mod }) {
   </main>`;
 }
 
-/** Recuerda la posición anterior de cada equipo para mostrar ▲/▼ unos segundos cuando cambia el orden. */
+/** Recuerda la posición anterior de cada equipo para mostrar si subió o bajó unos segundos cuando cambia el orden. */
 function useMoves(rows) {
   const prev = useRef(null);
   const [moves, setMoves] = useState({});
@@ -169,7 +169,7 @@ function useMoves(rows) {
   return moves;
 }
 
-function RankList({ rows, live }) {
+export function RankList({ rows, live }) {
   const moves = useMoves(rows);
   if (rows.length === 0) return html`<p class="muted center">Sin equipos en juego.</p>`;
   return html`<ol class="spec-list" aria-label="Ranking de equipos">
@@ -178,10 +178,10 @@ function RankList({ rows, live }) {
 }
 
 function statusText(r) {
-  if (r.status === 'opened') return html`<span class="spec-status ok">🔓 Abrió ${ordinal(r.finishSeq)} · ${mmss(r.elapsedMs)}</span>`;
-  if (r.status === 'time') return html`<span class="spec-status bad">⏱ Tiempo agotado</span>`;
-  if (r.status === 'moderator') return html`<span class="spec-status bad">Cerrado por el moderador</span>`;
-  return html`<span class="spec-status">Jugando · pregunta ${Math.min(r.answered + 1, r.total)} de ${r.total}</span>`;
+  if (r.status === 'opened') return html`<span class="spec-status ok ico-text"><${Icon} name="unlock" size=${14} />Abrió ${ordinal(r.finishSeq)} · ${mmss(r.elapsedMs)}</span>`;
+  if (r.status === 'time') return html`<span class="spec-status bad ico-text"><${Icon} name="clock" size=${14} />Tiempo agotado</span>`;
+  if (r.status === 'moderator') return html`<span class="spec-status bad ico-text"><${Icon} name="lock" size=${14} />Cerrado por el moderador</span>`;
+  return html`<span class="spec-status ico-text"><${Icon} name="bolt" size=${14} />Jugando · pregunta ${Math.min(r.answered + 1, r.total)} de ${r.total}</span>`;
 }
 
 function RankRow({ r, move, live }) {
@@ -190,7 +190,7 @@ function RankRow({ r, move, live }) {
   return html`<li class=${`spec-row c-${LOCKS[r.lock].key} ${r.position <= 3 ? `top top${r.position}` : ''} ${move > 0 ? 'moved-up' : move < 0 ? 'moved-down' : ''}`}>
     <div class="spec-pos" aria-label=${`Puesto ${r.position}`}>
       <span>${r.position}</span>
-      ${move ? html`<span class=${`spec-move ${move > 0 ? 'up' : 'down'}`}>${move > 0 ? '▲' : '▼'}${Math.abs(move)}</span>` : null}
+      ${move ? html`<span class=${`spec-move ${move > 0 ? 'up' : 'down'}`}><${Icon} name=${move > 0 ? 'caretUp' : 'caretDown'} size=${10} />${Math.abs(move)}</span>` : null}
     </div>
     <div class="spec-main">
       <div class="spec-name">${r.name}</div>
@@ -216,7 +216,7 @@ function RankRow({ r, move, live }) {
   </li>`;
 }
 
-function Legend({ weights, live, nextSpeed }) {
+export function Legend({ weights, live, nextSpeed }) {
   return html`<p class="tiny muted spec-legend">
     Nota = ${Math.round(weights.accuracy * 100)} % × aciertos (escala 0–5) + ${Math.round(weights.speed * 100)} % × velocidad por orden de apertura.
     ${live ? html` <b>*</b> Quien sigue jugando recibe la velocidad que tendría si abriera ahora (${dec(nextSpeed, 1)}); las preguntas sin responder cuentan como no acertadas. <b>Techo</b>: nota si acierta todo lo que le falta y abre ya.` : null}

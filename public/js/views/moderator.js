@@ -2,9 +2,10 @@ import { html, useEffect, useState } from '../lib/html.js';
 import { api, download, useConnection, useKeepAlive } from '../lib/connection.js';
 import { remainingFor, useTick } from '../lib/clock.js';
 import { LOCKS, grade, dec, mmss, phaseLabel, ordinal } from '../lib/format.js';
-import { Avatar, Icon, LevelIcon, LockPill, Pins, Toasts, ConnectionBanner, useToasts } from '../components/ui.js';
+import { Avatar, Icon, LevelIcon, Pins, Toasts, ConnectionBanner, useToasts } from '../components/ui.js';
 import { BankEditor } from './moderator-bank.js';
-import { RankingTable, speedBase } from './projector.js';
+import { speedBase } from './projector.js';
+import { LockClocks, Legend, RankList, fromResults } from './spectator.js';
 
 const KEY = 'erlab:modkey';
 const ROOM = 'erlab:modroom';
@@ -53,8 +54,8 @@ function Panel({ modKey, onLogout }) {
   const [code, setCode] = useState(localStorage.getItem(ROOM) || '');
   const conn = useConnection({ role: 'moderator', key: modKey }, {
     onEvent: (ev) => {
-      if (ev.type === 'opened') toast(`🔓 «${ev.name}» abrió el candado ${ev.lock} (${ordinal(ev.seq)})`);
-      if (ev.type === 'timeout') toast(`⏱ Tiempo agotado: «${ev.name}»`);
+      if (ev.type === 'opened') toast(`«${ev.name}» abrió el candado ${ev.lock} (${ordinal(ev.seq)})`, { icon: 'unlock' });
+      if (ev.type === 'timeout') toast(`Tiempo agotado: «${ev.name}»`, { icon: 'clock' });
     },
   });
   useKeepAlive(true);
@@ -80,7 +81,7 @@ function Panel({ modKey, onLogout }) {
   const act = async (event, payload, okMsg) => {
     const res = await conn.call(event, payload);
     if (!res.ok) toast(res.error, { kind: 'error', ms: 5000 });
-    else if (okMsg) toast(okMsg);
+    else if (okMsg) toast(okMsg, { icon: 'check' });
     return res;
   };
 
@@ -90,20 +91,39 @@ function Panel({ modKey, onLogout }) {
   };
 
   const mod = conn.mod && conn.mod.code === code ? conn.mod : null;
+  const leave = () => {
+    localStorage.removeItem(ROOM);
+    setCode('');
+  };
 
-  return html`<div class="theme-light">
-    ${!code || !mod
-      ? html`<${RoomPicker} conn=${conn} onChoose=${choose} onLogout=${onLogout} act=${act} loading=${!!code && !mod} />`
-      : html`<${RoomPanel} mod=${mod} act=${act} modKey=${modKey} toast=${toast} onLeave=${() => {
-          localStorage.removeItem(ROOM);
-          setCode('');
-        }} />`}
+  let body;
+  if (!code) body = html`<${RoomPicker} conn=${conn} onChoose=${choose} onLogout=${onLogout} act=${act} />`;
+  else if (!mod) {
+    body = html`<div class="cover" style="justify-items:center;text-align:center">
+      <span class="pill">Sala ${code}</span>
+      <p class="muted waiting-dots">Abriendo sala</p>
+      <button class="btn sm secondary" onClick=${leave}><${Icon} name="back" size=${14} /> Ver mis salas</button>
+    </div>`;
+  } else body = html`<${RoomPanel} mod=${mod} act=${act} modKey=${modKey} toast=${toast} onLeave=${leave} />`;
+
+  return html`<div class="theme-dark mod-app">
+    ${body}
     <${Toasts} toasts=${toasts} />
     <${ConnectionBanner} status=${conn.status} />
   </div>`;
 }
 
-function RoomPicker({ conn, onChoose, onLogout, act, loading }) {
+// ---------------------------------------------------------------------------
+// Inicio: crear o abrir una sala
+// ---------------------------------------------------------------------------
+const HOW = [
+  ['plus', 'Crea la sala', 'Recibes un código de 5 letras.'],
+  ['monitor', 'Proyecta el QR', 'Los estudiantes entran desde el celular.'],
+  ['users', 'Arma los equipos', 'Al azar con un toque; ajusta a mano.'],
+  ['play', 'Inicia y sigue el ranking', 'Los 4 candados arrancan a la vez.'],
+];
+
+function RoomPicker({ conn, onChoose, onLogout, act }) {
   const [rooms, setRooms] = useState(null);
   const [title, setTitle] = useState('El Laboratorio Sellado');
   const refresh = () => conn.call('mod:listRooms').then((r) => r.ok && setRooms(r.rooms));
@@ -111,49 +131,87 @@ function RoomPicker({ conn, onChoose, onLogout, act, loading }) {
     if (conn.status === 'online') refresh();
   }, [conn.status]);
 
-  async function create() {
+  async function create(e) {
+    e.preventDefault();
     const res = await act('mod:createRoom', { title });
     if (res.ok) onChoose(res.code);
   }
 
-  return html`<div class="wrap stack" style="padding-top:2rem">
-    <div class="row between">
+  return html`<div class="mod-home">
+    <header class="row between nowrap">
       <span class="pill">Panel del moderador</span>
-      <button class="btn sm secondary" onClick=${onLogout}>Cerrar sesión</button>
+      <button class="btn sm secondary" onClick=${onLogout}><${Icon} name="logout" size=${14} /> Salir</button>
+    </header>
+    <div class="mod-hero">
+      <h1 class="cover-title">El Laboratorio <span>Sellado</span></h1>
+      <p class="muted">Escape Room Estadístico · Análisis Cuantitativo de Datos</p>
     </div>
-    <h1>Escape Room Estadístico</h1>
-    ${loading ? html`<p class="muted waiting-dots">Abriendo sala</p>` : null}
-    <div class="card stack">
-      <h3>Crear una sala nueva</h3>
-      <div class="field"><label>Título (se ve en el proyector)</label><input class="input" value=${title} maxlength="60" onInput=${(e) => setTitle(e.target.value)} /></div>
-      <button class="btn lg" onClick=${create} disabled=${conn.status !== 'online'}>Crear sala <${Icon} name="play" size=${14} /></button>
-    </div>
-    <div class="card stack sm">
-      <div class="card-title"><h3>Salas existentes</h3><button class="btn sm secondary" onClick=${refresh}>Actualizar</button></div>
-      ${rooms === null ? html`<p class="muted">Cargando…</p>` : null}
-      ${rooms?.length === 0 ? html`<p class="muted small">No hay salas activas.</p>` : null}
-      ${rooms?.map((r) => html`<div class="player-line">
-        <b style="letter-spacing:.12em">${r.code}</b>
-        <span class="grow">${r.title} · <span class="muted">${phaseLabel(r.phase)} · ${r.players} jugadores</span></span>
-        <button class="btn sm" onClick=${() => onChoose(r.code)}>Abrir</button>
-        <button class="btn sm danger" onClick=${async () => {
-          if (confirm(`¿Eliminar la sala ${r.code}? Se pierden sus resultados.`)) {
-            await act('mod:deleteRoom', { code: r.code });
-            refresh();
-          }
-        }}>Eliminar</button>
-      </div>`)}
+    <div class="mod-home-grid">
+      <form class="card stack" onSubmit=${create}>
+        <h2 class="sec-title"><span class="sec-icon"><${Icon} name="plus" size=${16} /></span>Nueva sala</h2>
+        <div class="field"><label for="rt">Título (se ve en el proyector)</label>
+          <input id="rt" class="input" value=${title} maxlength="60" onInput=${(e) => setTitle(e.target.value)} /></div>
+        <button class="btn lg block" disabled=${conn.status !== 'online' || !title.trim()}>Crear sala <${Icon} name="play" size=${14} /></button>
+        <ol class="how-steps">
+          ${HOW.map(([icon, t, d], i) => html`<li>
+            <span class="how-num">${i + 1}</span>
+            <span><b>${t}</b><span class="tiny muted">${d}</span></span>
+            <span class="how-icon"><${Icon} name=${icon} size=${18} /></span>
+          </li>`)}
+        </ol>
+      </form>
+      <section class="card stack sm">
+        <div class="card-title">
+          <h2 class="sec-title"><span class="sec-icon"><${Icon} name="lock" size=${16} /></span>Salas guardadas</h2>
+          <button class="btn sm secondary" onClick=${refresh}><${Icon} name="sync" size=${14} /> Actualizar</button>
+        </div>
+        ${rooms === null ? html`<p class="muted">Cargando…</p>` : null}
+        ${rooms?.length === 0 ? html`<div class="empty"><${Icon} name="lock" size=${28} /><span>Aún no hay salas. Crea la primera a la izquierda.</span></div>` : null}
+        <div class="room-list">
+          ${rooms?.map((r) => html`<div class="room-item">
+            <span class="room-code">${r.code}</span>
+            <span class="grow room-info">
+              <b>${r.title}</b>
+              <span class="row" style="gap:.4rem"><${PhasePill} phase=${r.phase} /><span class="tiny muted">${r.players} jugador${r.players === 1 ? '' : 'es'}</span></span>
+            </span>
+            <button class="btn sm" onClick=${() => onChoose(r.code)}>Abrir</button>
+            <button class="icon-btn danger-ghost" title="Eliminar sala" aria-label=${`Eliminar la sala ${r.code}`} onClick=${async () => {
+              if (confirm(`¿Eliminar la sala ${r.code}? Se pierden sus resultados.`)) {
+                await act('mod:deleteRoom', { code: r.code });
+                refresh();
+              }
+            }}><${Icon} name="trash" size=${18} /></button>
+          </div>`)}
+        </div>
+      </section>
     </div>
   </div>`;
 }
 
-const TABS = [
-  ['teams', 'Sala y equipos'],
-  ['game', 'Partida en vivo'],
-  ['config', 'Ajustes'],
-  ['bank', 'Preguntas'],
-  ['results', 'Resultados'],
+function PhasePill({ phase }) {
+  return html`<span class=${`pill phase-pill ph-${phase}`}>${phaseLabel(phase)}</span>`;
+}
+
+// ---------------------------------------------------------------------------
+// Panel de una sala
+// ---------------------------------------------------------------------------
+const NAV = [
+  { id: 'teams', label: 'Sala', title: 'Sala y equipos', icon: 'users' },
+  { id: 'game', label: 'En vivo', title: 'Partida en vivo', icon: 'bolt' },
+  { id: 'results', label: 'Resultados', title: 'Resultados', icon: 'trophy' },
+  { id: 'bank', label: 'Preguntas', title: 'Banco de preguntas', icon: 'book' },
+  { id: 'config', label: 'Ajustes', title: 'Ajustes de la sala', icon: 'gear' },
 ];
+
+function navBadge(id, mod) {
+  if (id === 'teams' && mod.phase === 'lobby') {
+    const unassigned = mod.players.filter((p) => !p.teamId).length;
+    return unassigned ? { text: unassigned, warn: true } : null;
+  }
+  if (id === 'game' && mod.phase === 'running') return { text: '', live: true };
+  if (id === 'results' && mod.phase === 'finished' && !mod.podiumRevealed) return { text: '!', warn: true };
+  return null;
+}
 
 function RoomPanel({ mod, act, modKey, toast, onLeave }) {
   const [tab, setTab] = useState(mod.phase === 'lobby' ? 'teams' : mod.phase === 'finished' ? 'results' : 'game');
@@ -161,40 +219,82 @@ function RoomPanel({ mod, act, modKey, toast, onLeave }) {
     if (mod.phase === 'running') setTab((t) => (t === 'teams' ? 'game' : t));
     if (mod.phase === 'finished') setTab((t) => (t === 'game' ? 'results' : t));
   }, [mod.phase]);
+  const go = (id) => {
+    setTab(id);
+    window.scrollTo({ top: 0 });
+  };
 
   const joinUrl = `${location.origin}/?sala=${mod.code}`;
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(joinUrl);
-      toast('Enlace copiado');
+      toast('Enlace copiado', { icon: 'link' });
     } catch {
       prompt('Copia el enlace:', joinUrl);
     }
   };
+  const online = mod.players.filter((p) => p.online).length;
+  const current = NAV.find((n) => n.id === tab);
+  const flowTab = tab === 'teams' || tab === 'game' || tab === 'results';
+
+  const NavItems = ({ cls }) => NAV.map((n) => {
+    const badge = navBadge(n.id, mod);
+    return html`<button class=${`${cls} ${tab === n.id ? 'active' : ''}`} aria-current=${tab === n.id ? 'page' : null} onClick=${() => go(n.id)}>
+      <span class="nav-icon"><${Icon} name=${n.icon} size=${20} />${badge ? html`<span class=${`nav-badge ${badge.live ? 'live' : ''} ${badge.warn ? 'warn' : ''}`}>${badge.text}</span>` : null}</span>
+      <span class="nav-label">${n.label}</span>
+    </button>`;
+  });
 
   return html`<div class="mod-shell">
-    <header class="mod-top">
-      <button class="icon-btn" onClick=${onLeave} title="Cambiar de sala" aria-label="Cambiar de sala">←</button>
-      <span class="code">${mod.code}</span>
-      <span class=${`pill ${mod.phase === 'running' ? 'ok' : mod.phase === 'paused' ? 'l3' : mod.phase === 'finished' ? 'l2' : ''}`}>${phaseLabel(mod.phase)}</span>
-      <span class="small" style="opacity:.8">${mod.players.filter((p) => p.online).length}/${mod.players.length} conectados · ${mod.teams.length} equipos</span>
-      <span class="grow"></span>
-      <button class="btn sm secondary" style="background:rgba(255,255,255,.1);color:#fff" onClick=${copy}>Copiar enlace</button>
-      <a class="btn sm secondary" style="background:rgba(255,255,255,.1);color:#fff" href=${`/espectador?sala=${mod.code}`} target="_blank" rel="noopener">Ranking en vivo</a>
-      <a class="btn sm" href=${`/proyector?sala=${mod.code}`} target="_blank" rel="noopener">Abrir proyector <${Icon} name="expand" size=${14} /></a>
-      <${PrimaryAction} mod=${mod} act=${act} />
-    </header>
-    <nav class="tabs" role="tablist">
-      ${TABS.map(([id, label]) => html`<button role="tab" aria-selected=${tab === id} class=${`tab ${tab === id ? 'active' : ''}`} onClick=${() => setTab(id)}>${label}</button>`)}
-    </nav>
-    <main class="mod-body">
-      ${mod.autoPaused ? html`<div class="warn-box">El servidor se reinició y la partida quedó en pausa automáticamente. El progreso está intacto: pulsa <b>Reanudar</b> cuando todos estén conectados.</div>` : null}
-      ${tab === 'teams' ? html`<${TeamsTab} mod=${mod} act=${act} />` : null}
-      ${tab === 'game' ? html`<${GameTab} mod=${mod} act=${act} />` : null}
-      ${tab === 'config' ? html`<${ConfigTab} mod=${mod} act=${act} />` : null}
-      ${tab === 'bank' ? html`<${BankEditor} act=${act} modKey=${modKey} running=${mod.phase !== 'lobby'} />` : null}
-      ${tab === 'results' ? html`<${ResultsTab} mod=${mod} act=${act} modKey=${modKey} toast=${toast} />` : null}
-    </main>
+    <aside class="mod-side">
+      <button class="side-back" onClick=${onLeave}><${Icon} name="back" size=${16} /> Mis salas</button>
+      <div class="side-room">
+        <span class="tiny muted">Código de la sala</span>
+        <button class="side-code" onClick=${copy} title="Copiar enlace de acceso">${mod.code}</button>
+        <div class="small side-title">${mod.title}</div>
+        <div class="row" style="gap:.4rem"><${PhasePill} phase=${mod.phase} /><span class="tiny muted">${online}/${mod.players.length} conectados</span></div>
+      </div>
+      <nav class="side-nav" aria-label="Secciones"><${NavItems} cls="side-item" /></nav>
+      <div class="side-links">
+        <span class="tiny muted">Pantallas</span>
+        <${QuickLinks} mod=${mod} copy=${copy} />
+      </div>
+    </aside>
+
+    <div class="mod-main">
+      <header class="mod-top">
+        <button class="icon-btn mobile-only" onClick=${onLeave} title="Mis salas" aria-label="Volver a mis salas"><${Icon} name="back" size=${18} /></button>
+        <div class="top-id">
+          <button class="top-code mobile-only" onClick=${copy} title="Copiar enlace de acceso">${mod.code}</button>
+          <h1 class="top-title desktop-only">${current.title}</h1>
+        </div>
+        <span class="mobile-only"><${PhasePill} phase=${mod.phase} /></span>
+        <span class="top-count desktop-only"><${Icon} name="users" size=${16} /> ${online}/${mod.players.length} conectados · ${mod.teams.length} equipos</span>
+        <span class="grow"></span>
+        <${PrimaryAction} mod=${mod} act=${act} />
+      </header>
+
+      <main class="mod-body">
+        ${mod.autoPaused ? html`<div class="warn-box">El servidor se reinició y la partida quedó en pausa automáticamente. El progreso está intacto: pulsa <b>Reanudar</b> cuando todos estén conectados.</div>` : null}
+        ${flowTab ? html`<${FlowGuide} mod=${mod} act=${act} tab=${tab} go=${go} />` : null}
+        ${flowTab ? html`<div class="quick-row mobile-only"><${QuickLinks} mod=${mod} copy=${copy} /></div>` : html`<h2 class="page-title mobile-only">${current.title}</h2>`}
+        ${tab === 'teams' ? html`<${TeamsTab} mod=${mod} act=${act} copy=${copy} joinUrl=${joinUrl} />` : null}
+        ${tab === 'game' ? html`<${GameTab} mod=${mod} act=${act} />` : null}
+        ${tab === 'config' ? html`<${ConfigTab} mod=${mod} act=${act} />` : null}
+        ${tab === 'bank' ? html`<${BankEditor} act=${act} modKey=${modKey} running=${mod.phase !== 'lobby'} />` : null}
+        ${tab === 'results' ? html`<${ResultsTab} mod=${mod} modKey=${modKey} toast=${toast} />` : null}
+      </main>
+    </div>
+
+    <nav class="mod-bottom" aria-label="Secciones"><${NavItems} cls="bottom-item" /></nav>
+  </div>`;
+}
+
+function QuickLinks({ mod, copy }) {
+  return html`<div class="quick-links">
+    <a class="quick-link" href=${`/proyector?sala=${mod.code}`} target="_blank" rel="noopener"><${Icon} name="monitor" size=${16} /> Proyector</a>
+    <a class="quick-link" href=${`/espectador?sala=${mod.code}`} target="_blank" rel="noopener"><${Icon} name="trend" size=${16} /> Ranking en vivo</a>
+    <button class="quick-link" onClick=${copy}><${Icon} name="link" size=${16} /> Copiar enlace</button>
   </div>`;
 }
 
@@ -207,91 +307,173 @@ function PrimaryAction({ mod, act }) {
     return () => clearTimeout(t);
   }, [mod.phase, mod.podiumRevealed]);
 
+  const Label = ({ long, short }) => html`<span class="lbl-long">${long}</span><span class="lbl-short">${short}</span>`;
   if (mod.phase === 'lobby') {
     const n = mod.players.length;
-    return html`<button class="btn sm" disabled=${n === 0 || cooling} onClick=${() => {
+    const ready = n > 0 && mod.teams.length > 0 && mod.players.every((p) => p.teamId);
+    return html`<button class=${`btn primary-action ${ready && !cooling ? 'glow' : ''}`} disabled=${n === 0 || cooling} onClick=${() => {
       const unassigned = mod.players.filter((p) => !p.teamId).length;
       const msg = mod.teams.length === 0
         ? `No hay equipos: se armarán automáticamente con ${n} jugadores. ¿Iniciar?`
         : unassigned ? `${unassigned} jugador(es) sin equipo se ubicarán en los equipos más pequeños. ¿Iniciar?` : '¿Iniciar la partida? Los cuatro candados arrancan a la vez.';
       if (confirm(msg)) act('mod:start', {}, '¡Partida iniciada!');
-    }}><${Icon} name="play" size=${14} /> Iniciar partida</button>`;
+    }}><${Icon} name="play" size=${16} /><${Label} long="Iniciar partida" short="Iniciar" /></button>`;
   }
-  if (mod.phase === 'running') return html`<button class="btn sm" disabled=${cooling} onClick=${() => act('mod:pause')}><${Icon} name="pause" size=${14} /> Pausar</button>`;
-  if (mod.phase === 'paused') return html`<button class="btn sm teal" disabled=${cooling} onClick=${() => act('mod:resume')}><${Icon} name="play" size=${14} /> Reanudar</button>`;
-  if (mod.phase === 'finished' && !mod.podiumRevealed) return html`<button class="btn sm" disabled=${cooling} onClick=${() => act('mod:revealPodium', {}, '¡Podio revelado!')}><${Icon} name="trophy" size=${14} /> Revelar podio</button>`;
-  return html`<button class="btn sm secondary" style="background:rgba(255,255,255,.1);color:#fff" disabled=${cooling} onClick=${() => act('mod:hidePodium')}>Ocultar podio</button>`;
+  if (mod.phase === 'running') return html`<button class="btn primary-action secondary" disabled=${cooling} onClick=${() => act('mod:pause')}><${Icon} name="pause" size=${16} /><${Label} long="Pausar" short="Pausar" /></button>`;
+  if (mod.phase === 'paused') return html`<button class="btn primary-action teal glow" disabled=${cooling} onClick=${() => act('mod:resume')}><${Icon} name="play" size=${16} /><${Label} long="Reanudar" short="Reanudar" /></button>`;
+  if (mod.phase === 'finished' && !mod.podiumRevealed) return html`<button class="btn primary-action glow" disabled=${cooling} onClick=${() => act('mod:revealPodium', {}, '¡Podio revelado!')}><${Icon} name="trophy" size=${16} /><${Label} long="Revelar podio" short="Podio" /></button>`;
+  return html`<button class="btn primary-action secondary" disabled=${cooling} onClick=${() => act('mod:hidePodium')}><${Label} long="Ocultar podio" short="Ocultar" /></button>`;
+}
+
+// ---------------------------------------------------------------------------
+// Guía de la clase: en qué paso vas y qué sigue
+// ---------------------------------------------------------------------------
+function flowFor(mod) {
+  const players = mod.players.length;
+  const unassigned = mod.players.filter((p) => !p.teamId).length;
+  const lobby = mod.phase === 'lobby';
+  const steps = [
+    { label: 'Invitar', done: players > 0 || !lobby },
+    { label: 'Equipos', done: !lobby || (players > 0 && mod.teams.length > 0 && unassigned === 0) },
+    { label: 'Jugar', done: mod.phase === 'finished' },
+    { label: 'Resultados', done: !!mod.podiumRevealed },
+  ];
+  const at = steps.findIndex((s) => !s.done);
+  const current = at === -1 ? 3 : at;
+
+  let hint;
+  if (lobby && players === 0) hint = { title: 'Invita a los estudiantes', text: html`Proyecta el QR o comparte el enlace. Entran desde el celular con el código <b class="gold">${mod.code}</b>.`, cta: 'projector' };
+  else if (lobby && mod.teams.length === 0) hint = { title: `${players} estudiante${players === 1 ? '' : 's'} en la sala`, text: `Repártelos al azar en equipos de hasta ${mod.config.teamSize}; después puedes moverlos a mano. Si esperas a más, no pasa nada: quien llegue tarde se ubica solo.`, cta: 'assign' };
+  else if (lobby && unassigned) hint = { title: `${unassigned} sin equipo`, text: 'Muévelos a un equipo o pulsa «Iniciar partida»: se ubicarán en los equipos más pequeños.' };
+  else if (lobby) hint = { title: '¡Todo listo!', text: `${mod.teams.length} equipos con ${players} estudiantes. Cuando des la señal, pulsa «Iniciar partida».` };
+  else if (mod.phase === 'running') hint = { title: 'Partida en curso', text: 'Sigue el avance y el ranking en vivo. Puedes pausar o dar tiempo extra a un candado.', cta: 'game' };
+  else if (mod.phase === 'paused') hint = { title: 'Partida en pausa', text: 'Los relojes están detenidos. Pulsa «Reanudar» cuando todos estén listos.', cta: 'game' };
+  else if (!mod.podiumRevealed) hint = { title: '¡Se cerraron los candados!', text: 'Revela el podio en el proyector cuando quieras; luego abre el minuto de debate.', cta: 'results' };
+  else hint = { title: 'Cierre de la clase', text: 'Descarga las notas en CSV o imprime el informe para tu registro.', cta: 'results' };
+  return { steps, current, hint };
+}
+
+function FlowGuide({ mod, act, tab, go }) {
+  const { steps, current, hint } = flowFor(mod);
+  let cta = null;
+  if (hint.cta === 'projector') cta = html`<a class="btn sm" href=${`/proyector?sala=${mod.code}`} target="_blank" rel="noopener"><${Icon} name="monitor" size=${14} /> Abrir proyector</a>`;
+  if (hint.cta === 'assign') cta = html`<button class="btn sm violet" onClick=${() => act('mod:autoAssign', { teamCount: mod.config.teamCount || 0 }, 'Equipos armados')}><${Icon} name="shuffle" size=${14} /> Armar equipos al azar</button>`;
+  if (hint.cta === 'game' && tab !== 'game') cta = html`<button class="btn sm secondary" onClick=${() => go('game')}><${Icon} name="bolt" size=${14} /> Ver en vivo</button>`;
+  if (hint.cta === 'results' && tab !== 'results') cta = html`<button class="btn sm secondary" onClick=${() => go('results')}><${Icon} name="trophy" size=${14} /> Ver resultados</button>`;
+
+  return html`<section class="flow" aria-label="Guía de la clase">
+    <ol class="flow-steps">
+      ${steps.map((s, i) => html`<li class=${`flow-step ${s.done ? 'done' : ''} ${i === current && !s.done ? 'now' : ''}`}>
+        <span class="flow-dot">${s.done ? html`<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>` : i + 1}</span>
+        <span class="flow-label">${s.label}</span>
+      </li>`)}
+    </ol>
+    <div class="flow-hint">
+      <div class="grow">
+        <b>${hint.title}</b>
+        <p class="small muted">${hint.text}</p>
+      </div>
+      ${cta}
+    </div>
+  </section>`;
 }
 
 // ---------------------------------------------------------------------------
 // Sala y equipos
 // ---------------------------------------------------------------------------
-function TeamsTab({ mod, act }) {
+function InviteCard({ mod, copy, joinUrl, compact }) {
+  const online = mod.players.filter((p) => p.online).length;
+  const unassigned = mod.players.filter((p) => !p.teamId).length;
+  const stats = [
+    ['En línea', online, ''],
+    ['Inscritos', mod.players.length, ''],
+    ['Equipos', mod.teams.length, ''],
+    ['Sin equipo', unassigned, unassigned ? 'warn' : ''],
+  ];
+  const Stats = () => html`<div class="stat-row">
+    ${stats.map(([k, v, cls]) => html`<div class=${`stat ${cls}`}><b>${v}</b><span>${k}</span></div>`)}
+  </div>`;
+  if (compact) return html`<${Stats} />`;
+  return html`<section class="card invite">
+    <div class="invite-qr"><img src=${`/api/rooms/${mod.code}/qr.svg?v=${mod.code}`} alt=${`Código QR para entrar a la sala ${mod.code}`} width="150" height="150" /></div>
+    <div class="invite-info">
+      <span class="label">Código de acceso</span>
+      <div class="invite-code">${mod.code}</div>
+      <button class="invite-url" onClick=${copy} title="Copiar enlace"><span>${joinUrl.replace(/^https?:\/\//, '')}</span><${Icon} name="link" size=${16} /></button>
+      <${Stats} />
+    </div>
+  </section>`;
+}
+
+function TeamsTab({ mod, act, copy, joinUrl }) {
   const lobby = mod.phase === 'lobby';
   const [teamCount, setTeamCount] = useState(mod.config.teamCount || 0);
   const autoCount = Math.ceil(mod.players.length / mod.config.teamSize) || 0;
   const unassigned = mod.players.filter((p) => !p.teamId);
   const teamOptions = [['', 'Sin equipo'], ...mod.teams.map((t) => [t.id, t.name])];
+  const clampCount = (n) => Math.max(0, Math.min(16, n));
 
-  const PlayerLine = ({ p }) => html`<div class="player-line">
-    <span class=${`dot ${p.online ? '' : 'off'}`} title=${p.online ? 'Conectado' : 'Desconectado'}></span>
-    <span class="grow">${p.name}</span>
-    <select class="select" aria-label=${`Mover a ${p.name}`} value=${p.teamId || ''} disabled=${mod.phase === 'finished'}
+  const PlayerLine = ({ p }) => html`<li class="member-row">
+    <${Avatar} id=${p.id} name=${p.name} size=${28} online=${p.online} title=${p.online ? `${p.name} · conectado` : `${p.name} · desconectado`} />
+    <span class=${`grow member-name ${p.online ? '' : 'off'}`} title=${p.online ? p.name : `${p.name} · desconectado`}>${p.name}</span>
+    <select class="select xs" aria-label=${`Mover a ${p.name}`} value=${p.teamId || ''} disabled=${mod.phase === 'finished'}
       onChange=${(e) => act('mod:movePlayer', { playerId: p.id, teamId: e.target.value || null })}>
       ${teamOptions.map(([id, name]) => html`<option value=${id}>${name}</option>`)}
     </select>
-    <button class="btn sm danger" title="Retirar de la sala" aria-label=${`Retirar a ${p.name}`}
-      onClick=${() => confirm(`¿Retirar a ${p.name} de la sala?`) && act('mod:kick', { playerId: p.id })}>✕</button>
-  </div>`;
+    <button class="icon-btn xs danger-ghost" title="Retirar de la sala" aria-label=${`Retirar a ${p.name}`}
+      onClick=${() => confirm(`¿Retirar a ${p.name} de la sala?`) && act('mod:kick', { playerId: p.id })}><${Icon} name="x" size=${14} /></button>
+  </li>`;
 
   return html`
-    <div class="kpis">
-      <div class="kpi"><div class="k">Conectados</div><div class="v">${mod.players.filter((p) => p.online).length}</div></div>
-      <div class="kpi"><div class="k">Registrados</div><div class="v">${mod.players.length}</div></div>
-      <div class="kpi"><div class="k">Equipos</div><div class="v">${mod.teams.length}</div></div>
-      <div class="kpi"><div class="k">Sin equipo</div><div class="v">${unassigned.length}</div></div>
-    </div>
-    ${lobby
-      ? html`<div class="card stack sm">
-          <h3>Armar equipos</h3>
-          <p class="small muted" style="margin:0">Reparte a todos al azar en equipos parejos (tamaño máximo ${mod.config.teamSize}) y asigna candados en rotación 1 → 2 → 3 → 4. Luego puedes mover a cualquiera a mano.</p>
-          <div class="row">
-            <label class="small" for="tc"><b>Número de equipos</b></label>
-            <input id="tc" class="input" type="number" min="0" max="16" style="width:110px;min-height:40px" value=${teamCount} onInput=${(e) => setTeamCount(Number(e.target.value))} />
-            <span class="small muted">0 = automático (${autoCount} con ${mod.players.length} jugadores)</span>
-            <button class="btn sm violet" disabled=${mod.players.length === 0} onClick=${() => {
-              if (mod.teams.length === 0 || confirm('Esto rearma todos los equipos. ¿Continuar?')) act('mod:autoAssign', { teamCount }, 'Equipos armados');
-            }}>Armar automáticamente</button>
-            <button class="btn sm secondary" onClick=${() => act('mod:addTeam')}>+ Equipo vacío</button>
+    <${InviteCard} mod=${mod} copy=${copy} joinUrl=${joinUrl} compact=${!lobby} />
+    <section class="stack sm">
+      <div class="sec-head">
+        <h2 class="sec-title">Equipos <span class="count">${mod.teams.length}</span></h2>
+        ${lobby ? html`<div class="team-tools">
+          <div class="stepper" role="group" aria-label="Número de equipos">
+            <button class="icon-btn xs" aria-label="Menos equipos" onClick=${() => setTeamCount((n) => clampCount(n - 1))} disabled=${teamCount <= 0}><${Icon} name="minus" size=${14} /></button>
+            <span class="stepper-val"><b>${teamCount || 'Auto'}</b><span class="tiny muted">${teamCount ? 'equipos' : `${autoCount} equipos`}</span></span>
+            <button class="icon-btn xs" aria-label="Más equipos" onClick=${() => setTeamCount((n) => clampCount(n + 1))} disabled=${teamCount >= 16}><${Icon} name="plus" size=${14} /></button>
           </div>
-        </div>`
-      : html`<div class="warn-box small">La partida está en curso: puedes mover jugadores entre equipos (su progreso queda en el equipo), pero no crear ni borrar equipos.</div>`}
-    ${unassigned.length
-      ? html`<div class="card stack sm" style="border-top:5px solid var(--ink-3)">
-          <h3>Sin equipo (${unassigned.length})</h3>
-          ${unassigned.map((p) => html`<${PlayerLine} p=${p} />`)}
-        </div>`
-      : null}
-    <div class="team-grid">
-      ${mod.teams.map((t) => html`<div class=${`team-box c-${LOCKS[t.lock].key}`}>
-        <div class="row nowrap">
-          <${LevelIcon} lock=${t.lock} size=${36} number=${false} />
-          <input class="input grow" style="min-height:38px;font-weight:700" value=${t.name} maxlength="32" aria-label="Nombre del equipo"
-            onChange=${(e) => act('mod:renameTeam', { teamId: t.id, name: e.target.value })} />
-        </div>
-        <div class="row">
-          <select class="select" style="min-height:36px;width:auto" disabled=${!lobby} value=${t.lock} aria-label="Candado"
-            onChange=${(e) => act('mod:setTeamLock', { teamId: t.id, lock: Number(e.target.value) })}>
-            ${[1, 2, 3, 4].map((l) => html`<option value=${l}>Candado ${l} · ${LOCKS[l].short}</option>`)}
-          </select>
-          <span class="small muted grow">${t.members.length} integrante${t.members.length === 1 ? '' : 's'}</span>
-          ${lobby ? html`<button class="btn sm danger" onClick=${() => confirm(`¿Eliminar «${t.name}»? Sus integrantes quedan sin equipo.`) && act('mod:deleteTeam', { teamId: t.id })}>Eliminar</button>` : null}
-        </div>
-        <div>${mod.players.filter((p) => p.teamId === t.id).map((p) => html`<${PlayerLine} p=${p} />`)}</div>
-        ${t.members.length === 0 ? html`<p class="small muted" style="margin:0">Equipo vacío (se descarta al iniciar).</p>` : null}
-      </div>`)}
-    </div>
-    ${mod.players.length === 0 ? html`<div class="card center muted">Aún no hay jugadores. Abre el proyector para mostrar el QR y el código <b>${mod.code}</b>.</div>` : null}
+          <button class="btn sm violet" disabled=${mod.players.length === 0} onClick=${() => {
+            if (mod.teams.length === 0 || confirm('Esto rearma todos los equipos. ¿Continuar?')) act('mod:autoAssign', { teamCount }, 'Equipos armados');
+          }}><${Icon} name="shuffle" size=${14} /> Armar al azar</button>
+          <button class="btn sm secondary" onClick=${() => act('mod:addTeam')} title="Añadir un equipo vacío" aria-label="Añadir un equipo vacío"><${Icon} name="plus" size=${14} /><span class="lbl-long">Equipo</span></button>
+        </div>` : null}
+      </div>
+      <p class="small muted" style="margin:0">${lobby
+        ? `«Armar al azar» reparte a todos en equipos parejos (máximo ${mod.config.teamSize}) y asigna los candados en rotación 1 → 2 → 3 → 4. Luego puedes mover a cualquiera con su menú.`
+        : 'La partida ya empezó: puedes mover jugadores entre equipos (el progreso queda en el equipo), pero no crear ni borrar equipos.'}</p>
+
+      ${unassigned.length ? html`<div class="bench">
+        <div class="bench-head"><${Icon} name="users" size=${16} /> <b>Sin equipo (${unassigned.length})</b></div>
+        <ul class="member-list">${unassigned.map((p) => html`<${PlayerLine} key=${p.id} p=${p} />`)}</ul>
+      </div>` : null}
+
+      ${mod.teams.length === 0
+        ? html`<div class="empty"><${Icon} name="users" size=${30} /><span>${mod.players.length ? 'Aún no hay equipos. Usa «Armar al azar» o crea uno vacío.' : 'Aún no hay jugadores. Cuando entren, aparecerán aquí.'}</span></div>`
+        : html`<div class="team-grid">
+          ${mod.teams.map((t) => html`<article key=${t.id} class=${`team-card c-${LOCKS[t.lock].key}`}>
+            <header class="team-card-head">
+              <${LevelIcon} lock=${t.lock} size=${34} number=${false} />
+              <input class="team-name" value=${t.name} maxlength="32" aria-label="Nombre del equipo" title="Toca para renombrar"
+                onChange=${(e) => act('mod:renameTeam', { teamId: t.id, name: e.target.value })} />
+              ${lobby ? html`<button class="icon-btn xs danger-ghost" title="Eliminar equipo" aria-label=${`Eliminar ${t.name}`}
+                onClick=${() => confirm(`¿Eliminar «${t.name}»? Sus integrantes quedan sin equipo.`) && act('mod:deleteTeam', { teamId: t.id })}><${Icon} name="trash" size=${16} /></button>` : null}
+            </header>
+            <div class="team-card-meta">
+              <select class="select xs lock-select" disabled=${!lobby} value=${t.lock} aria-label="Candado"
+                onChange=${(e) => act('mod:setTeamLock', { teamId: t.id, lock: Number(e.target.value) })}>
+                ${[1, 2, 3, 4].map((l) => html`<option value=${l}>Candado ${l} · ${LOCKS[l].short}</option>`)}
+              </select>
+              <span class="tiny muted">${t.members.length} integrante${t.members.length === 1 ? '' : 's'}</span>
+            </div>
+            ${t.members.length
+              ? html`<ul class="member-list">${mod.players.filter((p) => p.teamId === t.id).map((p) => html`<${PlayerLine} key=${p.id} p=${p} />`)}</ul>`
+              : html`<p class="tiny muted" style="margin:0">Equipo vacío (se descarta al iniciar).</p>`}
+          </article>`)}
+        </div>`}
+    </section>
   `;
 }
 
@@ -302,45 +484,77 @@ function GameTab({ mod, act }) {
   useTick(500, mod.phase === 'running');
   const [lock, setLock] = useState('all');
   const inGame = mod.phase === 'running' || mod.phase === 'paused';
+  const finished = mod.phase === 'finished' && mod.results;
   const nameOf = (id) => mod.players.find((p) => p.id === id)?.name ?? '—';
+  const usedLocks = [...new Set(mod.teams.map((t) => t.lock))].sort();
+
+  if (mod.phase === 'lobby') {
+    return html`<div class="empty big">
+      <${Icon} name="bolt" size=${36} />
+      <b>La partida aún no empieza</b>
+      <span>Cuando pulses «Iniciar partida», aquí verás los relojes, el avance de cada equipo y el ranking en vivo.</span>
+    </div>`;
+  }
+
+  const rows = finished ? fromResults(mod.results) : mod.live?.teams ?? [];
+  const weights = finished ? mod.results.teams[0]?.breakdown.weights : mod.live?.weights;
 
   return html`
-    <div class="card stack sm">
-      <div class="row">
-        ${mod.phase !== 'finished' ? html`<${PrimaryAction} mod=${mod} act=${act} />` : null}
-        ${inGame ? html`
-          <span class="grow"></span>
-          <select class="select" style="width:auto;min-height:36px" value=${lock} onChange=${(e) => setLock(e.target.value)} aria-label="Candado al que se ajusta el tiempo">
-            <option value="all">Todos los candados</option>
-            ${[1, 2, 3, 4].map((l) => html`<option value=${l}>Candado ${l}</option>`)}
-          </select>
+    <section class="card control-bar">
+      ${inGame ? html`<div class="ctrl-group">
+        <span class="label">Tiempo</span>
+        <div class="seg" role="radiogroup" aria-label="Candado al que se ajusta el tiempo">
+          <button role="radio" aria-checked=${lock === 'all'} class=${`seg-btn ${lock === 'all' ? 'on' : ''}`} onClick=${() => setLock('all')}>Todos</button>
+          ${usedLocks.map((l) => html`<button role="radio" aria-checked=${String(lock) === String(l)} class=${`seg-btn c-${LOCKS[l].key} ${String(lock) === String(l) ? 'on' : ''}`} onClick=${() => setLock(l)}>C${l}</button>`)}
+        </div>
+        <div class="row" style="gap:.4rem">
           <button class="btn sm secondary" onClick=${() => act('mod:addTime', { lock, seconds: -30 })}>−30 s</button>
           <button class="btn sm secondary" onClick=${() => act('mod:addTime', { lock, seconds: 30 })}>+30 s</button>
           <button class="btn sm secondary" onClick=${() => act('mod:addTime', { lock, seconds: 60 })}>+1 min</button>
-          <button class="btn sm danger" onClick=${() => confirm('¿Terminar la partida ahora? Los candados abiertos se cierran con lo respondido.') && act('mod:end')}>Terminar</button>` : null}
-        ${mod.phase !== 'lobby' ? html`<button class="btn sm secondary" onClick=${() => confirm('¿Reiniciar? Se borra el progreso y vuelven al lobby (se conservan jugadores y equipos).') && act('mod:reset', {}, 'De vuelta al lobby')}>Reiniciar</button>` : null}
+        </div>
+      </div>` : html`<p class="small muted grow" style="margin:0">Partida terminada. Puedes reiniciarla para jugar otra ronda con los mismos equipos.</p>`}
+      <div class="ctrl-group end">
+        ${inGame ? html`<button class="btn sm danger" onClick=${() => confirm('¿Terminar la partida ahora? Los candados abiertos se cierran con lo respondido.') && act('mod:end')}><${Icon} name="flag" size=${14} /> Terminar</button>` : null}
+        <button class="btn sm secondary" onClick=${() => confirm('¿Reiniciar? Se borra el progreso y vuelven al lobby (se conservan jugadores y equipos).') && act('mod:reset', {}, 'De vuelta al lobby')}><${Icon} name="rotate" size=${14} /> Reiniciar</button>
       </div>
+    </section>
+    ${inGame ? html`<${LockClocks} mod=${mod} />` : null}
+
+    <div class="live-grid">
+      <section class="stack sm">
+        <h2 class="sec-title">${finished ? 'Ranking final' : 'Ranking en vivo'}</h2>
+        <${RankList} rows=${rows} live=${!finished} />
+        ${weights ? html`<${Legend} weights=${weights} live=${!finished} nextSpeed=${mod.live?.nextSpeed} />` : null}
+      </section>
+      <section class="stack sm">
+        <h2 class="sec-title">Avance por equipo</h2>
+        <div class="prog-grid">
+          ${mod.teams.map((t) => {
+            const answers = t.answers.map((a) => ({ correct: a.correct }));
+            const state = t.opened ? 'opened' : t.closedBy ? 'closed' : '';
+            return html`<article key=${t.id} class=${`prog-card c-${LOCKS[t.lock].key} ${state}`}>
+              <div class="row between nowrap">
+                <div class="row nowrap" style="min-width:0;gap:.5rem"><${LevelIcon} lock=${t.lock} size=${28} number=${false} /><b class="prog-name">${t.name}</b></div>
+                ${t.opened ? html`<span class="pill ok"><${Icon} name="unlock" size=${13} />${ordinal(t.finishSeq)}</span>`
+                  : t.closedBy ? html`<span class="pill ghost"><${Icon} name=${t.closedBy === 'time' ? 'clock' : 'lock'} size=${13} />${t.closedBy === 'time' ? 'Tiempo' : 'Cerrado'}</span>`
+                  : html`<b class="num gold">${mmss(remainingFor(mod, t.lock))}</b>`}
+              </div>
+              <${Pins} total=${t.total} answers=${answers} current=${t.closedBy === null && !t.opened ? t.currentIndex : null} />
+              <div class="small row between"><span>Aciertos <b>${t.correct ?? 0}/${t.total}</b></span><span class="muted">XP ${t.xp ?? 0}</span></div>
+              ${t.currentPrompt ? html`<div class="tiny muted clamp-2">P${t.currentIndex + 1}: ${t.currentPrompt}</div>` : null}
+              <div class="row" style="gap:.3rem">
+                ${t.members.map((m) => html`<${Avatar} id=${m.id} name=${m.name} size=${26} online=${m.online} captain=${m.id === t.captainId} />`)}
+                ${t.captainId ? html`<span class="tiny muted">Capitán: ${nameOf(t.captainId)} · ${t.votesCount} voto(s)</span>` : null}
+              </div>
+            </article>`;
+          })}
+        </div>
+      </section>
     </div>
-    <div class="grid-2" style="grid-template-columns:repeat(auto-fill,minmax(300px,1fr))">
-      ${mod.teams.map((t) => {
-        const remaining = remainingFor(mod, t.lock);
-        const answers = t.answers.map((a) => ({ correct: a.correct }));
-        return html`<div class=${`team-box c-${LOCKS[t.lock].key}`}>
-          <div class="row between nowrap">
-            <div class="row nowrap"><${LevelIcon} lock=${t.lock} size=${32} number=${false} /><b>${t.name}</b></div>
-            ${t.opened ? html`<span class="pill ok">🔓 ${ordinal(t.finishSeq)}</span>` : t.closedBy ? html`<span class="pill ghost" style="color:var(--ink-2);background:var(--paper)">${t.closedBy === 'time' ? '⏱ Tiempo' : 'Cerrado'}</span>` : html`<b class="num">${mmss(remaining)}</b>`}
-          </div>
-          <${Pins} total=${t.total} answers=${answers} current=${t.closedBy === null && !t.opened ? t.currentIndex : null} />
-          <div class="small row between"><span>Aciertos: <b>${t.correct ?? 0}/${t.total}</b></span><span>XP ${t.xp ?? 0}</span></div>
-          ${t.currentPrompt ? html`<div class="small muted" style="overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical">P${t.currentIndex + 1}: ${t.currentPrompt}</div>` : null}
-          <div class="row" style="gap:.3rem">
-            ${t.members.map((m) => html`<${Avatar} id=${m.id} name=${m.name} size=${28} online=${m.online} captain=${m.id === t.captainId} />`)}
-            ${t.captainId ? html`<span class="tiny muted">Capitán: ${nameOf(t.captainId)} · ${t.votesCount} voto(s)</span>` : null}
-          </div>
-        </div>`;
-      })}
-    </div>
-    <div class="card stack sm"><h3>Bitácora</h3><div class="log">${[...mod.log].reverse().map((l) => html`<div>${new Date(l.at).toLocaleTimeString('es-CO')} · ${l.text}</div>`)}</div></div>
+    <details class="card log-card">
+      <summary><span class="chev"><${Icon} name="chevron" size=${14} /></span><b>Bitácora</b> <span class="tiny muted">(${mod.log.length} eventos)</span></summary>
+      <div class="log">${[...mod.log].reverse().map((l) => html`<div><span class="muted num">${new Date(l.at).toLocaleTimeString('es-CO')}</span> ${l.text}</div>`)}</div>
+    </details>
   `;
 }
 
@@ -365,80 +579,100 @@ function ConfigTab({ mod, act }) {
     const speed = pos ? speedBase(c.scoring, pos) : c.scoring.timeoutSpeed;
     return { label, score: w.accuracy * (correct * 20 / 20) + w.speed * speed, speed, correct };
   });
+  const Toggle = ({ checked, disabled, onChange, title, desc }) => html`<label class=${`toggle-row ${disabled ? 'disabled' : ''}`}>
+    <span class="grow"><b>${title}</b><span class="small muted">${desc}</span></span>
+    <input type="checkbox" class="switch" checked=${checked} disabled=${disabled} onChange=${(e) => onChange(e.target.checked)} />
+  </label>`;
 
   return html`
-    ${!lobby ? html`<div class="warn-box small">La partida ya empezó: el tamaño de equipos, las preguntas por candado y los tiempos base quedan fijos (usa +1 min en «Partida en vivo»). Los pesos sí se pueden ajustar: si la partida terminó, las notas se recalculan al instante.</div>` : null}
-    <div class="grid-2">
-      <div class="card stack">
-        <h3>Sala</h3>
-        <div class="field"><label>Título</label><input class="input" value=${c.title} maxlength="60" onChange=${(e) => patch({ title: e.target.value })} /></div>
-        <div class="row">
-          <div class="field grow"><label>Tamaño de equipo</label><input class="input" type="number" min="1" max="12" value=${c.teamSize} disabled=${!lobby} onChange=${(e) => patch({ teamSize: Number(e.target.value) })} /></div>
-          <div class="field grow"><label>Número de equipos (0 = auto)</label><input class="input" type="number" min="0" max="16" value=${c.teamCount} disabled=${!lobby} onChange=${(e) => patch({ teamCount: Number(e.target.value) })} /></div>
+    ${mod.phase === 'finished'
+      ? html`<div class="warn-box small">La partida terminó: el tamaño de equipos, las preguntas y los tiempos quedan fijos hasta reiniciar. Los pesos de la nota sí se pueden ajustar y las notas se recalculan al instante.</div>`
+      : !lobby ? html`<div class="warn-box small">La partida está en curso: el tamaño de equipos, las preguntas por candado y los tiempos quedan fijos (usa el tiempo extra en «En vivo»). Los pesos de la nota sí se pueden ajustar.</div>` : null}
+    <div class="config-grid">
+      <section class="card stack">
+        <h2 class="sec-title"><span class="sec-icon"><${Icon} name="users" size=${16} /></span>Sala</h2>
+        <div class="field"><label>Título (proyector)</label><input class="input" value=${c.title} maxlength="60" onChange=${(e) => patch({ title: e.target.value })} /></div>
+        <div class="field-grid">
+          <div class="field"><label>Tamaño de equipo</label><input class="input" type="number" min="1" max="12" value=${c.teamSize} disabled=${!lobby} onChange=${(e) => patch({ teamSize: Number(e.target.value) })} /></div>
+          <div class="field"><label>Equipos (0 = auto)</label><input class="input" type="number" min="0" max="16" value=${c.teamCount} disabled=${!lobby} onChange=${(e) => patch({ teamCount: Number(e.target.value) })} /></div>
+          <div class="field"><label>Preguntas por candado</label><input class="input" type="number" min="1" max="10" value=${c.questionsPerLock} disabled=${!lobby} onChange=${(e) => patch({ questionsPerLock: Number(e.target.value) })} /></div>
         </div>
-        <div class="field"><label>Preguntas por candado</label><input class="input" type="number" min="1" max="10" value=${c.questionsPerLock} disabled=${!lobby} onChange=${(e) => patch({ questionsPerLock: Number(e.target.value) })} /></div>
-        <div>
-          <div class="label" style="margin-bottom:.4rem">Tiempo límite por candado (minutos)</div>
-          <div class="row">
-            ${[1, 2, 3, 4].map((l) => html`<div class="field" style="width:110px"><label class=${`c-${LOCKS[l].key}`} style="color:var(--c)">C${l} · ${LOCKS[l].short}</label>
+        <div class="stack sm">
+          <span class="label">Tiempo por candado (minutos)</span>
+          <div class="field-grid four">
+            ${[1, 2, 3, 4].map((l) => html`<div class=${`field lock-field c-${LOCKS[l].key}`}><label>C${l} · ${LOCKS[l].short}</label>
               <input class="input" type="number" min="0.5" max="60" step="0.5" value=${c.timeLimitsSec[l] / 60} disabled=${!lobby}
                 onChange=${(e) => patch({ timeLimitsSec: { [l]: Math.round(Number(e.target.value) * 60) } })} /></div>`)}
           </div>
         </div>
-      </div>
-      <div class="card stack">
-        <h3>Reglas del juego</h3>
+      </section>
+
+      <section class="card stack">
+        <h2 class="sec-title"><span class="sec-icon"><${Icon} name="check" size=${16} /></span>Reglas del juego</h2>
         <div class="stack sm" role="radiogroup" aria-label="Retroalimentación">
-          <div class="label">Retroalimentación al responder</div>
+          <span class="label">Retroalimentación al responder</span>
           ${[
-            ['verdict', 'Correcto/incorrecto al instante (recomendado)', 'Cada equipo ve ✓/✗ y suma XP. Las soluciones se desbloquean cuando todos los equipos de ese candado terminan, para no soplar respuestas.'],
-            ['instant', 'Todo al instante', 'Muestra ✓/✗, la respuesta correcta y la explicación enseguida. Úsalo solo si cada candado tiene un único equipo.'],
+            ['verdict', 'Correcto/incorrecto al instante', 'Recomendado. Cada equipo sabe si acertó y suma XP; las soluciones se desbloquean cuando todos los equipos de ese candado terminan.'],
+            ['instant', 'Todo al instante', 'Muestra si acertó, la respuesta correcta y la explicación enseguida. Solo si cada candado tiene un único equipo.'],
             ['end', 'Todo al final', 'Solo se registra la respuesta; aciertos y soluciones se ven al terminar. Máximo suspenso.'],
-          ].map(([id, label, desc]) => html`<label class="check">
+          ].map(([id, label, desc]) => html`<label class=${`choice ${c.feedbackMode === id ? 'on' : ''}`}>
             <input type="radio" name="fb" checked=${c.feedbackMode === id} onChange=${() => patch({ feedbackMode: id })} />
-            <span><b>${label}</b><br /><span class="small muted">${desc}</span></span>
+            <span><b>${label}</b><span class="small muted">${desc}</span></span>
           </label>`)}
         </div>
-        <label class="check"><input type="checkbox" checked=${c.shuffle} disabled=${!lobby} onChange=${(e) => patch({ shuffle: e.target.checked })} />
-          <span><b>Barajar preguntas y opciones por equipo</b><br /><span class="small muted">Dos equipos en el mismo candado ven otro orden: copiar la letra no sirve.</span></span></label>
-        <label class="check"><input type="checkbox" checked=${c.autoAssignLate} onChange=${(e) => patch({ autoAssignLate: e.target.checked })} />
-          <span><b>Ubicar automáticamente a quien llega tarde</b><br /><span class="small muted">Entra al equipo con menos integrantes.</span></span></label>
-        <label class="check"><input type="checkbox" checked=${c.showLiveAccuracy} onChange=${(e) => patch({ showLiveAccuracy: e.target.checked })} />
-          <span><b>Mostrar aciertos en vivo en el proyector</b><br /><span class="small muted">Por defecto se ocultan hasta el podio para mantener el suspenso.</span></span></label>
-      </div>
+        <div class="toggle-list">
+          <${Toggle} checked=${c.shuffle} disabled=${!lobby} onChange=${(v) => patch({ shuffle: v })} title="Barajar preguntas y opciones" desc="Dos equipos en el mismo candado ven otro orden: copiar la letra no sirve." />
+          <${Toggle} checked=${c.autoAssignLate} onChange=${(v) => patch({ autoAssignLate: v })} title="Ubicar a quien llega tarde" desc="Entra automáticamente al equipo con menos integrantes." />
+          <${Toggle} checked=${c.showLiveAccuracy} onChange=${(v) => patch({ showLiveAccuracy: v })} title="Aciertos en vivo en el proyector" desc="Por defecto se ocultan hasta el podio para mantener el suspenso." />
+        </div>
+      </section>
     </div>
-    <div class="card stack">
-      <h3>Fórmula de la nota</h3>
-      <p class="small" style="margin:0"><b>Puntaje = ${accDraft} % × (Acierto/20) + ${100 - accDraft} % × Velocidad</b>, donde Acierto = 20 puntos por pregunta correcta (0–100) y Velocidad = base según el orden en que el equipo abre su candado. Nota = puntaje con un decimal. Desempates: más aciertos → abrió antes de que se acabara el tiempo → menor tiempo total → orden de apertura → nombre.</p>
+
+    <section class="card stack">
+      <h2 class="sec-title"><span class="sec-icon"><${Icon} name="bars" size=${16} /></span>Fórmula de la nota</h2>
+      <div class="formula-box">
+        <b>Nota = <span class="gold">${accDraft}\u00a0%</span> × aciertos (0–5) + <span class="gold">${100 - accDraft}\u00a0%</span> × velocidad</b>
+        <span class="small muted">Aciertos: cada pregunta correcta vale 1 punto sobre 5. Velocidad: según el orden en que el equipo abre su candado. Desempates: más aciertos → abrió antes del tiempo → menor tiempo → orden de apertura → nombre.</span>
+      </div>
       <div class="field">
-        <label for="w">Peso del acierto: ${accDraft} % · velocidad: ${100 - accDraft} %</label>
+        <label for="w">Peso del acierto: ${accDraft}\u00a0% · velocidad: ${100 - accDraft}\u00a0%</label>
         <input id="w" class="slider" type="range" min="0" max="100" step="5" value=${accDraft} onInput=${(e) => setAccDraft(Number(e.target.value))}
           onChange=${(e) => patch({ scoring: { weights: { accuracy: Number(e.target.value), speed: 100 - Number(e.target.value) } } })} />
       </div>
-      <div class="row">
-        ${c.scoring.speedTable.map((v, i) => html`<div class="field" style="width:95px"><label>${i + 1}.º abre</label>
-          <input class="input" type="number" step="0.1" min="0" max="5" value=${v} onChange=${(e) => {
-            const t = [...c.scoring.speedTable];
-            t[i] = Number(e.target.value);
-            patch({ scoring: { speedTable: t } });
-          }} /></div>`)}
-        <div class="field" style="width:95px"><label>Paso luego</label><input class="input" type="number" step="0.1" min="0" max="5" value=${c.scoring.speedStep} onChange=${(e) => patch({ scoring: { speedStep: Number(e.target.value) } })} /></div>
-        <div class="field" style="width:95px"><label>Piso</label><input class="input" type="number" step="0.1" min="0" max="5" value=${c.scoring.speedFloor} onChange=${(e) => patch({ scoring: { speedFloor: Number(e.target.value) } })} /></div>
-        <div class="field" style="width:120px"><label>Tiempo agotado</label><input class="input" type="number" step="0.1" min="0" max="5" value=${c.scoring.timeoutSpeed} onChange=${(e) => patch({ scoring: { timeoutSpeed: Number(e.target.value) } })} /></div>
+      <div class="stack sm">
+        <span class="label">Tabla de velocidad</span>
+        <div class="field-grid speed">
+          ${c.scoring.speedTable.map((v, i) => html`<div class="field"><label>${i + 1}.º abre</label>
+            <input class="input" type="number" step="0.1" min="0" max="5" value=${v} onChange=${(e) => {
+              const t = [...c.scoring.speedTable];
+              t[i] = Number(e.target.value);
+              patch({ scoring: { speedTable: t } });
+            }} /></div>`)}
+          <div class="field"><label>Paso luego</label><input class="input" type="number" step="0.1" min="0" max="5" value=${c.scoring.speedStep} onChange=${(e) => patch({ scoring: { speedStep: Number(e.target.value) } })} /></div>
+          <div class="field"><label>Piso</label><input class="input" type="number" step="0.1" min="0" max="5" value=${c.scoring.speedFloor} onChange=${(e) => patch({ scoring: { speedFloor: Number(e.target.value) } })} /></div>
+          <div class="field"><label>Sin abrir</label><input class="input" type="number" step="0.1" min="0" max="5" value=${c.scoring.timeoutSpeed} onChange=${(e) => patch({ scoring: { timeoutSpeed: Number(e.target.value) } })} /></div>
+        </div>
       </div>
-      <div class="table-wrap"><table class="table">
-        <thead><tr><th>Escenario</th><th>Acierto (0-5)</th><th>Velocidad</th><th>Puntaje</th><th>Nota</th></tr></thead>
-        <tbody>${scen.map((s) => html`<tr><td>${s.label}</td><td>${dec(s.correct, 1)}</td><td>${dec(s.speed, 1)}</td><td>${dec(s.score)}</td><td><b>${grade(Math.round(s.score * 10) / 10)}</b></td></tr>`)}</tbody>
-      </table></div>
-    </div>
+      <div class="stack sm">
+        <span class="label">Así quedarían las notas</span>
+        <div class="scen-grid">
+          ${scen.map((s) => html`<div class="scen">
+            <span class="small">${s.label}</span>
+            <span class="tiny muted">Acierto ${dec(s.correct, 1)} · velocidad ${dec(s.speed, 1)}</span>
+            <span class="grade-chip">${grade(Math.round(s.score * 10) / 10)}</span>
+          </div>`)}
+        </div>
+      </div>
+    </section>
   `;
 }
 
 // ---------------------------------------------------------------------------
 // Resultados y exportación
 // ---------------------------------------------------------------------------
-function ResultsTab({ mod, act, modKey, toast }) {
+function ResultsTab({ mod, modKey, toast }) {
   const r = mod.results;
+  const lobby = mod.phase === 'lobby';
   const dl = async (kind, name) => {
     try {
       await download(`/api/rooms/${mod.code}/export/${kind}`, modKey, name);
@@ -446,44 +680,61 @@ function ResultsTab({ mod, act, modKey, toast }) {
       toast(e.message, { kind: 'error' });
     }
   };
+  const Tile = ({ icon, title, desc, onClick, href }) => {
+    const body = html`<span class="export-icon"><${Icon} name=${icon} size=${20} /></span><span class="grow"><b>${title}</b><span class="tiny muted">${desc}</span></span>`;
+    return href
+      ? html`<a class=${`export-tile ${lobby ? 'disabled' : ''}`} href=${href} target="_blank" rel="noopener" aria-disabled=${lobby}>${body}</a>`
+      : html`<button class="export-tile" disabled=${lobby} onClick=${onClick}>${body}</button>`;
+  };
+
   return html`
-    <div class="card row">
-      <b class="grow">Exportar</b>
-      <button class="btn sm secondary" onClick=${() => dl('equipos.csv', 'equipos.csv')} disabled=${mod.phase === 'lobby'}><${Icon} name="download" size=${14} /> CSV por equipo</button>
-      <button class="btn sm secondary" onClick=${() => dl('estudiantes.csv', 'estudiantes.csv')} disabled=${mod.phase === 'lobby'}><${Icon} name="download" size=${14} /> CSV por estudiante</button>
-      <a class=${`btn sm ${mod.phase === 'lobby' ? 'secondary' : ''}`} href=${`/informe?sala=${mod.code}`} target="_blank" rel="noopener">Informe PDF (imprimir)</a>
-      ${mod.phase === 'finished'
-        ? mod.podiumRevealed
-          ? html`<button class="btn sm secondary" onClick=${() => act('mod:hidePodium')}>Ocultar podio</button>`
-          : html`<button class="btn sm" onClick=${() => act('mod:revealPodium', {}, '¡Podio revelado!')}><${Icon} name="trophy" size=${14} /> Revelar podio</button>`
-        : null}
-    </div>
+    <section class="stack sm">
+      <h2 class="sec-title">Exportar</h2>
+      <div class="export-grid">
+        <${Tile} icon="download" title="CSV por equipo" desc="Ranking, puntajes y desglose" onClick=${() => dl('equipos.csv', 'equipos.csv')} />
+        <${Tile} icon="download" title="CSV por estudiante" desc="Nota individual y participación" onClick=${() => dl('estudiantes.csv', 'estudiantes.csv')} />
+        <${Tile} icon="file" title="Informe PDF" desc="Para imprimir o guardar" href=${`/informe?sala=${mod.code}`} />
+      </div>
+      ${lobby ? html`<p class="tiny muted" style="margin:0">Disponible cuando empiece la partida. Mientras se juega, los CSV salen parciales.</p>` : null}
+    </section>
     ${!r
-      ? html`<div class="card muted">Los resultados definitivos aparecen cuando todos los candados se cierran o pulsas «Terminar». Mientras tanto puedes descargar un CSV parcial.</div>`
+      ? html`<div class="empty big"><${Icon} name="trophy" size=${36} /><b>Aún no hay resultados definitivos</b><span>Aparecen cuando todos los candados se cierran o pulsas «Terminar» en «En vivo».</span></div>`
       : html`
-        <div class="card stack sm">
-          <h3>Ranking de equipos</h3>
-          <p class="small muted" style="margin:0">Pesos: acierto ${Math.round(r.scoring.weights.accuracy * 100)} % · velocidad ${Math.round(r.scoring.weights.speed * 100)} %. Cambia los pesos en «Ajustes» y se recalcula todo.</p>
-          <${RankingTable} rows=${r.teams} light />
-        </div>
-        <div class="card stack sm">
-          <h3>Notas por estudiante</h3>
-          <p class="small muted" style="margin:0">La nota individual es la del equipo (trabajo cooperativo). La participación se reporta para que decidas si ajustar casos puntuales.</p>
-          <div class="table-wrap"><table class="table">
+        ${mod.podiumRevealed ? null : html`<div class="warn-box small"><b>El podio aún no se revela en el proyector.</b> Pulsa el botón dorado del trofeo, arriba a la derecha, cuando quieras mostrarlo a la clase.</div>`}
+        <section class="stack sm">
+          <h2 class="sec-title">Ranking final</h2>
+          <${RankList} rows=${fromResults(r)} live=${false} />
+          <${Legend} weights=${r.scoring.weights} live=${false} />
+        </section>
+        <section class="card stack sm">
+          <h2 class="sec-title">Notas por estudiante</h2>
+          <p class="small muted" style="margin:0">La nota individual es la del equipo (trabajo cooperativo). La participación te ayuda a decidir si ajustar casos puntuales.</p>
+          <table class="table rtable">
             <thead><tr><th>Estudiante</th><th>Equipo</th><th>Candado</th><th>Puesto</th><th>Nota</th><th>Votos</th><th>Confirmó</th><th>Participación</th></tr></thead>
             <tbody>${r.students.map((s) => html`<tr>
-              <td>${s.name}</td><td>${s.teamName}</td><td>${s.lock ? html`<${LockPill} lock=${s.lock} />` : '—'}</td>
-              <td>${s.position ?? '—'}</td><td><b>${grade(s.grade)}</b></td><td>${s.votes}</td><td>${s.confirms}</td>
-              <td style=${s.participation < 40 ? 'color:var(--red);font-weight:700' : ''}>${s.participation} %</td>
+              <td data-label="Estudiante"><b>${s.name}</b></td>
+              <td data-label="Equipo">${s.teamName}</td>
+              <td data-label="Candado">${s.lock ? html`<span class=${`pill ${LOCKS[s.lock].key}`} title=${LOCKS[s.lock].short}>C${s.lock}<span class="lbl-long"> · ${LOCKS[s.lock].short}</span></span>` : '—'}</td>
+              <td data-label="Puesto">${s.position ?? '—'}</td>
+              <td data-label="Nota"><span class="grade-chip sm">${grade(s.grade)}</span></td>
+              <td data-label="Votos">${s.votes}</td>
+              <td data-label="Confirmó">${s.confirms}</td>
+              <td data-label="Particip." class=${s.participation < 40 ? 'low' : ''}>${s.participation} %</td>
             </tr>`)}</tbody>
-          </table></div>
-        </div>
-        <div class="card stack sm">
-          <h3>Dificultad real de las preguntas</h3>
-          <div class="table-wrap"><table class="table">
-            <thead><tr><th>Candado</th><th>Pregunta</th><th>Aciertos</th><th>%</th></tr></thead>
-            <tbody>${r.questionStats.map((s) => html`<tr><td><${LockPill} lock=${s.lock} /></td><td class="small">${s.prompt}</td><td>${s.correct}/${s.attempts}</td><td><b>${s.accuracy ?? '—'}${s.accuracy !== null ? ' %' : ''}</b></td></tr>`)}</tbody>
-          </table></div>
-        </div>`}
+          </table>
+        </section>
+        <section class="card stack sm">
+          <h2 class="sec-title">Dificultad real de las preguntas</h2>
+          <div class="qstats">
+            ${r.questionStats.map((s) => html`<div class=${`qstat c-${LOCKS[s.lock].key}`}>
+              <span class="qstat-lock">C${s.lock}</span>
+              <span class="qstat-main">
+                <span class="small clamp-2">${s.prompt}</span>
+                <span class="stat-bar"><i style=${`width:${s.accuracy ?? 0}%`}></i></span>
+              </span>
+              <span class="qstat-val"><b>${s.accuracy ?? '—'}${s.accuracy !== null ? ' %' : ''}</b><span class="tiny muted">${s.correct}/${s.attempts}</span></span>
+            </div>`)}
+          </div>
+        </section>`}
   `;
 }

@@ -51,7 +51,7 @@ Módulos (`src/modules/`): `game` (reglas), `scoring` (nota, desempates, insigni
 | Tema | Decisión | Por qué | Dónde se cambia |
 | --- | --- | --- | --- |
 | Tamaño de equipo cuando no da exacto | Equipos de hasta 5, lo más parejos posible (23 → 5-5-5-4-4). Nunca quedan equipos de 1 o 2 si hay 6 o más estudiantes. | Un equipo de 2 contra uno de 5 no es justo, y uno de 6 deja gente sin tocar el celular. | Configuración → tamaño o número de equipos |
-| Candado de cada equipo | Rotación 1-2-3-4-1…; el moderador puede cambiarlo por equipo. | Con 8 equipos quedan 2 por candado, así la comparación es pareja. | Pestaña Equipos |
+| Candado de cada equipo | Rotación 1-2-3-4-1…; el moderador puede cambiarlo por equipo. | Con 8 equipos quedan 2 por candado, así la comparación es pareja. | Sección Sala |
 | Estudiantes que llegan tarde | Se asignan solos al equipo con menos integrantes, incluso con la partida en curso. | El profesor no tiene que detenerse a acomodarlos. | Configuración → asignación automática de tardíos |
 | Equipos vacíos al iniciar | Se eliminan al pulsar Iniciar. | Evita candados "fantasma" que nunca se cierran. | — |
 | Cómo coopera el equipo | Todos votan desde su celular y ven los votos de los demás en vivo. Un **capitán rotativo** confirma. En numéricas, cada quien propone un valor y los demás pueden apoyarlo con un toque. | Todos participan, pero la respuesta final es una sola y no hay "gana el más rápido". La rotación reparte el protagonismo. | `gameEngine.js` |
@@ -63,7 +63,7 @@ Módulos (`src/modules/`): `game` (reglas), `scoring` (nota, desempates, insigni
 | --- | --- | --- | --- |
 | Tiempo por candado | 8 minutos por defecto, configurable por candado (30 s a 60 min). | 5 preguntas con cálculos en grupo caben en 8 min sin que sobre mucho. | Configuración |
 | Pausa | Congela todos los relojes; nadie puede votar durante la pausa. | Justo para todos si hay que explicar algo o se cae la red. | — |
-| Tiempo extra | +30 s / +1 min / −30 s, por candado o para todos, en cualquier momento. | Para compensar un problema técnico de un equipo sin afectar a los demás. | Pestaña Partida |
+| Tiempo extra | +30 s / +1 min / −30 s, por candado o para todos, en cualquier momento. | Para compensar un problema técnico de un equipo sin afectar a los demás. | Sección En vivo |
 | Fin de la partida | Termina sola cuando todos los candados se cierran, abiertos o por tiempo. El moderador puede terminarla antes. | No hay que estar pendiente de un botón. | — |
 
 ### Puntuación y retroalimentación
@@ -84,8 +84,8 @@ Módulos (`src/modules/`): `game` (reglas), `scoring` (nota, desempates, insigni
 
 | Tema | Decisión | Por qué | Dónde se cambia |
 | --- | --- | --- | --- |
-| Selección de preguntas | Las 5 primeras activas de cada candado, en orden barajado por equipo. Hay 2 de reserva por candado. | Todos los equipos del mismo candado responden lo mismo, lo cual es justo, pero no en el mismo orden. | Pestaña Banco o `data/questions.json` |
-| Edición del banco | Desde el panel, con validación. Aplica a partidas nuevas, nunca a la que está en curso. | Corregir un typo cinco minutos antes de la clase sin tocar código. | Pestaña Banco |
+| Selección de preguntas | Las 5 primeras activas de cada candado, en orden barajado por equipo. Hay 2 de reserva por candado. | Todos los equipos del mismo candado responden lo mismo, lo cual es justo, pero no en el mismo orden. | Sección Preguntas o `data/questions.json` |
+| Edición del banco | Desde el panel, con validación. Aplica a partidas nuevas, nunca a la que está en curso. | Corregir un typo cinco minutos antes de la clase sin tocar código. | Sección Preguntas |
 | PDF | Informe imprimible en `/informe` → "Guardar como PDF" del navegador. | Evita una librería pesada de PDF en el servidor y queda con el mismo estilo visual. | — |
 | CSV | Separador `;`, coma decimal y BOM UTF-8. | Excel en español lo abre directamente con tildes y números correctos. | `exportService.js` |
 | Persistencia | Redis (Render Key Value) si existe `REDIS_URL`; si no, archivos locales. Las salas expiran a las 12 h sin actividad. | Es persistencia mínima pero suficiente para sobrevivir a un reinicio en plena clase. | `ROOM_TTL_HOURS` |

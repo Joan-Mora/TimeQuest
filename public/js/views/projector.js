@@ -47,11 +47,11 @@ function Projector({ code }) {
       } else if (ev.type === 'started') sfx.start();
       else if (ev.type === 'timeout') {
         sfx.alarm();
-        toast(`⏱ Se acabó el tiempo de «${ev.name}»`);
+        toast(`Se acabó el tiempo de «${ev.name}»`, { icon: 'clock' });
       } else if (ev.type === 'ended') sfx.drum();
-      else if (ev.type === 'time') toast(`${ev.seconds > 0 ? '+' : ''}${ev.seconds} s ${ev.lock === 'all' ? 'para todos los candados' : `para el candado ${ev.lock}`}`);
-      else if (ev.type === 'paused') toast('⏸ Partida en pausa');
-      else if (ev.type === 'resumed') toast('▶ ¡Continúa la partida!');
+      else if (ev.type === 'time') toast(`${ev.seconds > 0 ? '+' : ''}${ev.seconds} s ${ev.lock === 'all' ? 'para todos los candados' : `para el candado ${ev.lock}`}`, { icon: 'clock' });
+      else if (ev.type === 'paused') toast('Partida en pausa', { icon: 'pause' });
+      else if (ev.type === 'resumed') toast('¡Continúa la partida!', { icon: 'play' });
     },
   });
 
@@ -151,11 +151,11 @@ function ProjectorLobby({ pub }) {
 
 function TeamTile({ pub, team, lobby }) {
   const status = team.opened
-    ? html`<span class="pill" style="font-size:.8em">🔓 Abierto · ${ordinal(team.finishSeq)} · ${mmss(team.finishedAtMs)}</span>`
+    ? html`<span class="pill" style="font-size:.8em"><${Icon} name="unlock" size=${14} />Abierto · ${ordinal(team.finishSeq)} · ${mmss(team.finishedAtMs)}</span>`
     : team.closedBy === 'time'
-      ? html`<span class="pill ghost" style="font-size:.8em">⏱ Tiempo agotado</span>`
+      ? html`<span class="pill ghost" style="font-size:.8em"><${Icon} name="clock" size=${14} />Tiempo agotado</span>`
       : team.closedBy
-        ? html`<span class="pill ghost" style="font-size:.8em">Cerrado</span>`
+        ? html`<span class="pill ghost" style="font-size:.8em"><${Icon} name="lock" size=${14} />Cerrado</span>`
         : lobby ? null : html`<span class="small muted num">${team.answered}/${team.total} respondidas</span>`;
   const pins = Array.from({ length: team.answered }, () => ({ correct: null }));
   return html`<div class=${`team-tile ${team.opened ? 'opened' : ''} ${team.closedBy === 'time' ? 'timeout' : ''}`}>
@@ -289,7 +289,7 @@ export function RankingTable({ rows, light = false }) {
           <td><${LockPill} lock=${r.lock} /></td>
           <td>${r.correct}/${r.total} (${dec(r.breakdown.accuracyPoints, 0)})</td>
           <td>${dec(r.breakdown.accuracy5)} → <b>${dec(r.breakdown.accuracyPart)}</b></td>
-          <td>${r.opened ? ordinal(r.breakdown.speedPosition) : r.closedBy === 'time' ? '⏱' : '—'}</td>
+          <td>${r.opened ? ordinal(r.breakdown.speedPosition) : r.closedBy === 'time' ? html`<span title="Tiempo agotado"><${Icon} name="clock" size=${14} /></span>` : '—'}</td>
           <td>${dec(r.breakdown.speed, 1)} → <b>${dec(r.breakdown.speedPart)}</b></td>
           <td>${dec(r.score)}</td>
           <td><span class="grade-chip">${grade(r.grade)}</span></td>

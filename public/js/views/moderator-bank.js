@@ -118,50 +118,63 @@ export function BankEditor({ act, running }) {
   };
 
   return html`
-    <div class="card row">
-      <div class="grow small">
-        <b>Fuente:</b> ${info?.source === 'panel' ? 'editado desde este panel (guardado en el servidor)' : 'archivo data/questions.json'}
-        ${dirty ? html` · <b style="color:var(--red)">cambios sin guardar</b>` : null}
-        ${running ? html`<div class="tiny muted">La partida en curso usa una copia de las preguntas tomada al iniciar; los cambios aplican a la próxima partida.</div>` : null}
+    <div class=${`card bank-bar ${dirty ? 'dirty' : ''}`}>
+      <div class="bank-info">
+        <span class="sec-icon"><${Icon} name="book" size=${16} /></span>
+        <div class="grow small">
+          <b>${info?.source === 'panel' ? 'Banco editado desde este panel' : 'Banco del archivo data/questions.json'}</b>
+          ${dirty ? html`<span class="bank-dirty">Cambios sin guardar</span>` : null}
+          ${running ? html`<div class="tiny muted">La partida en curso usa una copia tomada al iniciar; los cambios aplican a la próxima partida.</div>` : null}
+        </div>
       </div>
-      <button class="btn sm" disabled=${!dirty} onClick=${save}>Guardar cambios</button>
-      <button class="btn sm secondary" disabled=${!dirty} onClick=${load}>Descartar</button>
-      <button class="btn sm secondary" onClick=${exportJson}><${Icon} name="download" size=${14} /> Descargar JSON</button>
-      <button class="btn sm secondary" onClick=${() => fileRef.current?.click()}>Importar JSON</button>
-      <input ref=${fileRef} type="file" accept="application/json,.json" hidden onChange=${importJson} />
-      <button class="btn sm danger" onClick=${resetToFile}>Restaurar archivo</button>
+      <div class="bank-actions">
+        <button class="btn sm" disabled=${!dirty} onClick=${save}><${Icon} name="check" size=${14} /> Guardar</button>
+        <button class="btn sm secondary" disabled=${!dirty} onClick=${load}><${Icon} name="rotate" size=${14} /> Descartar</button>
+        <span class="bank-sep"></span>
+        <button class="btn sm secondary" onClick=${exportJson} title="Descargar el banco en JSON"><${Icon} name="download" size=${14} /> JSON</button>
+        <button class="btn sm secondary" onClick=${() => fileRef.current?.click()} title="Importar un banco en JSON"><${Icon} name="up" size=${14} /> Importar</button>
+        <input ref=${fileRef} type="file" accept="application/json,.json" hidden onChange=${importJson} />
+        <button class="btn sm secondary danger-text" onClick=${resetToFile} title="Volver al archivo original"><${Icon} name="trash" size=${14} /> Restaurar</button>
+      </div>
     </div>
     ${msg
       ? html`<div class=${msg.kind === 'error' ? 'error-box' : msg.kind === 'warn' ? 'warn-box' : 'ok-box'} style="white-space:pre-line">
           ${msg.text}${msg.list?.length ? html`<ul class="small" style="margin:.4rem 0 0">${msg.list.map((w) => html`<li>${w}</li>`)}</ul>` : null}
         </div>`
       : null}
-    <nav class="tabs" style="border-radius:var(--r-md)">
-      ${[1, 2, 3, 4].map((l) => html`<button class=${`tab ${lock === l ? 'active' : ''}`} onClick=${() => { setLock(l); setEditing(null); }}>
-        C${l} · ${LOCKS[l].short} <span class="tiny muted">(${perLock(l)} activas)</span>
+    <nav class="tabs lock-tabs" aria-label="Candado">
+      ${[1, 2, 3, 4].map((l) => html`<button class=${`tab c-${LOCKS[l].key} ${lock === l ? 'active' : ''}`} aria-pressed=${lock === l} onClick=${() => { setLock(l); setEditing(null); }}>
+        <span class="tab-dot"></span><span>C${l}<span class="lbl-long"> · ${LOCKS[l].short}</span></span><span class="tab-count">${perLock(l)}</span>
       </button>`)}
     </nav>
     <div class=${`card stack sm c-${LOCKS[lock].key}`} style="border-top:5px solid var(--c)">
       <div class="row nowrap"><${LevelIcon} lock=${lock} size=${40} /><h3 class="grow">Historia del candado</h3></div>
-      <div class="row">
-        <div class="field grow"><label>Título</label><input class="input" value=${lockMeta.title ?? ''} onInput=${(e) => update((b) => { lockRef(b, lock).title = e.target.value; })} /></div>
-        <div class="field grow"><label>Insignia al abrirlo</label><input class="input" value=${lockMeta.badge ?? ''} onInput=${(e) => update((b) => { lockRef(b, lock).badge = e.target.value; })} /></div>
+      <div class="field-grid wide">
+        <div class="field"><label>Título</label><input class="input" value=${lockMeta.title ?? ''} onInput=${(e) => update((b) => { lockRef(b, lock).title = e.target.value; })} /></div>
+        <div class="field"><label>Insignia al abrirlo</label><input class="input" value=${lockMeta.badge ?? ''} onInput=${(e) => update((b) => { lockRef(b, lock).badge = e.target.value; })} /></div>
       </div>
       <div class="field"><label>Historia (se muestra al equipo al iniciar)</label><textarea class="textarea" rows="2" value=${lockMeta.story ?? ''} onInput=${(e) => update((b) => { lockRef(b, lock).story = e.target.value; })}></textarea></div>
     </div>
     <p class="small muted" style="margin:0">Cada equipo recibe las primeras N preguntas <b>activas</b> de su candado (N = «Preguntas por candado» en Ajustes), en orden barajado si está activado. Las desactivadas quedan de reserva.</p>
     <div class="stack sm">
-      ${qs.map((q, i) => html`<div class=${`q-item ${q.active === false ? 'inactive' : ''}`}>
-        <div class="row" style="gap:.5rem">
-          <b class="small" style="min-width:4.5em">${i + 1}. ${q.id}</b>
-          <span class="pill ghost" style="background:var(--paper);color:var(--ink-2)">${q.type === 'mc' ? 'Opción múltiple' : 'Numérica'}</span>
-          <span class="tiny muted">${DIFFICULTY[q.difficulty]?.label ?? 'Media'}</span>
-          ${q.example !== false ? html`<span class="pill l3" title="Pregunta de ejemplo pendiente de revisión">Ejemplo</span>` : null}
-          <span class="grow"></span>
-          <label class="check tiny" style="padding:0"><input type="checkbox" checked=${q.active !== false} onChange=${(e) => update((b) => { b.questions[indexOf(q.id)].active = e.target.checked; })} /> Activa</label>
-          <button class="btn sm secondary" aria-label="Subir" onClick=${() => move(q.id, -1)} disabled=${i === 0}>↑</button>
-          <button class="btn sm secondary" aria-label="Bajar" onClick=${() => move(q.id, 1)} disabled=${i === qs.length - 1}>↓</button>
-          <button class="btn sm" onClick=${() => setEditing(editing === q.id ? null : q.id)}>${editing === q.id ? 'Cerrar' : 'Editar'}</button>
+      ${qs.map((q, i) => html`<div class=${`q-item c-${LOCKS[lock].key} ${q.active === false ? 'inactive' : ''}`}>
+        <div class="q-head">
+          <div class="q-meta">
+            <span class="q-num">${i + 1}</span>
+            <b class="small">${q.id}</b>
+            <span class="pill ghost">${q.type === 'mc' ? 'Opción múltiple' : 'Numérica'}</span>
+            <span class="tiny muted">${DIFFICULTY[q.difficulty]?.label ?? 'Media'}</span>
+            ${q.example !== false ? html`<span class="pill l3" title="Pregunta de ejemplo pendiente de revisión">Ejemplo</span>` : null}
+          </div>
+          <div class="q-actions">
+            <label class="q-active" title="Las preguntas inactivas quedan de reserva">
+              <input type="checkbox" class="switch sm" checked=${q.active !== false} onChange=${(e) => update((b) => { b.questions[indexOf(q.id)].active = e.target.checked; })} />
+              <span class="tiny">Activa</span>
+            </label>
+            <button class="icon-btn xs" aria-label="Subir" title="Subir" onClick=${() => move(q.id, -1)} disabled=${i === 0}><${Icon} name="up" size=${14} /></button>
+            <button class="icon-btn xs" aria-label="Bajar" title="Bajar" onClick=${() => move(q.id, 1)} disabled=${i === qs.length - 1}><${Icon} name="down" size=${14} /></button>
+            <button class=${`btn sm ${editing === q.id ? 'secondary' : ''}`} onClick=${() => setEditing(editing === q.id ? null : q.id)}>${editing === q.id ? 'Cerrar' : 'Editar'}</button>
+          </div>
         </div>
         ${editing === q.id
           ? html`<${QuestionForm} q=${q} onChange=${(fn) => update((b) => fn(b.questions[indexOf(q.id)]))}
@@ -189,7 +202,7 @@ export function BankEditor({ act, running }) {
         const q = newQuestion(lock, type, draft.questions);
         update((b) => b.questions.push(q));
         setEditing(q.id);
-      }}>+ Pregunta ${type === 'mc' ? 'de opción múltiple' : 'numérica'}</button>`)}
+      }}><${Icon} name="plus" size=${14} /> Pregunta ${type === 'mc' ? 'de opción múltiple' : 'numérica'}</button>`)}
     </div>
   `;
 }
@@ -219,23 +232,24 @@ function QuestionForm({ q, onChange, onRename, onDuplicate, onDelete }) {
   });
 
   return html`<div class="stack sm" style="margin-top:.7rem">
-    <div class="row">
-      <div class="field" style="width:130px"><label>Id</label><input class="input" value=${q.id} onChange=${(e) => onRename(e.target.value.trim())} /></div>
-      <div class="field" style="width:190px"><label>Tipo</label>
+    <div class="field-grid q-meta-fields">
+      <div class="field"><label>Id</label><input class="input" value=${q.id} onChange=${(e) => onRename(e.target.value.trim())} /></div>
+      <div class="field q-type-field"><label>Tipo</label>
         <select class="select" value=${q.type} onChange=${(e) => changeType(e.target.value)}>
           <option value="mc">Opción múltiple</option><option value="numeric">Numérica</option>
         </select></div>
-      <div class="field" style="width:140px"><label>Dificultad</label>
+      <div class="field"><label>Dificultad</label>
         <select class="select" value=${q.difficulty || 'media'} onChange=${(e) => set('difficulty', e.target.value)}>
           ${Object.entries(DIFFICULTY).map(([k, d]) => html`<option value=${k}>${d.label}</option>`)}
         </select></div>
-      <label class="check small"><input type="checkbox" checked=${q.example !== false} onChange=${(e) => set('example', e.target.checked)} /> Marcada como ejemplo</label>
     </div>
+    <label class="toggle-row"><span class="grow"><b class="small">Marcada como ejemplo</b><span class="tiny muted">Recordatorio de que aún debes revisarla.</span></span>
+      <input type="checkbox" class="switch" checked=${q.example !== false} onChange=${(e) => set('example', e.target.checked)} /></label>
     <div class="field"><label>Enunciado</label><textarea class="textarea" rows="3" value=${q.prompt} onInput=${(e) => set('prompt', e.target.value)}></textarea>
       <span class="tiny muted">Tip: escribe los datos como «n = 25» o «x̄ = 48»; se resaltan en dorado como en la presentación.</span></div>
-    <div class="row">
-      <div class="field grow"><label>Datos / tabla (opcional)</label><textarea class="textarea" rows="2" value=${q.data || ''} onInput=${(e) => set('data', e.target.value)}></textarea></div>
-      <div class="field grow"><label>Pista (opcional)</label><textarea class="textarea" rows="2" value=${q.hint || ''} onInput=${(e) => set('hint', e.target.value)}></textarea></div>
+    <div class="field-grid wide">
+      <div class="field"><label>Datos / tabla (opcional)</label><textarea class="textarea" rows="2" value=${q.data || ''} onInput=${(e) => set('data', e.target.value)}></textarea></div>
+      <div class="field"><label>Pista (opcional)</label><textarea class="textarea" rows="2" value=${q.hint || ''} onInput=${(e) => set('hint', e.target.value)}></textarea></div>
     </div>
     ${q.type === 'mc'
       ? html`<div class="stack sm">
@@ -244,25 +258,26 @@ function QuestionForm({ q, onChange, onRename, onDuplicate, onDelete }) {
             <input type="radio" name=${`ans-${q.id}`} checked=${q.answer === i} onChange=${() => set('answer', i)} aria-label=${`Opción ${LETTERS[i]} es la correcta`} />
             <b>${LETTERS[i]}</b>
             <input class="input grow" value=${o} onInput=${(e) => onChange((x) => { x.options[i] = e.target.value; })} />
-            <button class="btn sm secondary" disabled=${q.options.length <= 2} aria-label="Quitar opción" onClick=${() => onChange((x) => {
+            <button class="icon-btn danger-ghost" disabled=${q.options.length <= 2} aria-label="Quitar opción" title="Quitar opción" onClick=${() => onChange((x) => {
               x.options.splice(i, 1);
               if (x.answer >= x.options.length) x.answer = x.options.length - 1;
               else if (x.answer > i) x.answer -= 1;
-            })}>✕</button>
+            })}><${Icon} name="x" size=${16} /></button>
           </div>`)}
-          ${q.options.length < 6 ? html`<button class="btn sm secondary" style="align-self:flex-start" onClick=${() => onChange((x) => { x.options.push(''); })}>+ Opción</button>` : null}
+          ${q.options.length < 6 ? html`<button class="btn sm secondary" style="align-self:flex-start" onClick=${() => onChange((x) => { x.options.push(''); })}><${Icon} name="plus" size=${14} /> Opción</button>` : null}
         </div>`
-      : html`<div class="row">
-          <div class="field" style="width:160px"><label>Respuesta</label><input class="input" type="number" step="any" value=${q.answer} onChange=${(e) => set('answer', Number(e.target.value))} /></div>
-          <div class="field" style="width:160px"><label>Tolerancia (±)</label><input class="input" type="number" step="any" min="0" value=${q.tolerance ?? ''} onChange=${(e) => set('tolerance', e.target.value === '' ? undefined : Number(e.target.value))} /></div>
-          <div class="field" style="width:120px"><label>Unidad</label><input class="input" value=${q.unit || ''} onInput=${(e) => set('unit', e.target.value)} /></div>
-          <span class="tiny muted grow">Se acepta coma o punto decimal. Tolerancia 0 = valor exacto.</span>
+      : html`<div class="stack sm">
+          <div class="field-grid">
+            <div class="field"><label>Respuesta</label><input class="input" type="number" step="any" value=${q.answer} onChange=${(e) => set('answer', Number(e.target.value))} /></div>
+            <div class="field"><label>Tolerancia (±)</label><input class="input" type="number" step="any" min="0" value=${q.tolerance ?? ''} onChange=${(e) => set('tolerance', e.target.value === '' ? undefined : Number(e.target.value))} /></div>
+            <div class="field"><label>Unidad</label><input class="input" value=${q.unit || ''} onInput=${(e) => set('unit', e.target.value)} /></div>
+          </div>
+          <span class="tiny muted">Se acepta coma o punto decimal. Tolerancia 0 = valor exacto.</span>
         </div>`}
     <div class="field"><label>Explicación (se muestra en la revisión)</label><textarea class="textarea" rows="3" value=${q.explanation || ''} onInput=${(e) => set('explanation', e.target.value)}></textarea></div>
-    <div class="row">
-      <span class="grow"></span>
-      <button class="btn sm secondary" onClick=${onDuplicate}>Duplicar</button>
-      <button class="btn sm danger" onClick=${onDelete}>Eliminar</button>
+    <div class="row" style="justify-content:flex-end">
+      <button class="btn sm secondary" onClick=${onDuplicate}><${Icon} name="plus" size=${14} /> Duplicar</button>
+      <button class="btn sm danger" onClick=${onDelete}><${Icon} name="trash" size=${14} /> Eliminar</button>
     </div>
   </div>`;
 }

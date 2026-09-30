@@ -87,7 +87,7 @@ function JoinScreen({ initialCode, onJoined }) {
         </div>
         <div class="field">
           <label for="name">Tu nombre</label>
-          <input id="name" class="input" value=${name} maxlength="24" autocomplete="given-name" placeholder="Ej.: Laura Gómez"
+          <input id="name" class="input" value=${name} maxlength="32" autocomplete="given-name" placeholder="Ej.: Laura Gómez"
             onInput=${(e) => setName(e.target.value)} />
         </div>
         ${error ? html`<div class="error-box" role="alert">${error}</div>` : null}
@@ -136,18 +136,18 @@ function PlayScreen({ session, onExit }) {
             sfx.unlock();
             vibrate([100, 50, 100, 50, 200]);
           } else {
-            toast(`🔓 «${ev.name}» abrió el candado ${ev.lock} (${ordinal(ev.seq)})`);
+            toast(`«${ev.name}» abrió el candado ${ev.lock} (${ordinal(ev.seq)})`, { icon: 'unlock' });
           }
         } else if (ev.type === 'started') {
           sfx.start();
           vibrate(150);
         } else if (ev.type === 'time') {
-          toast(`${ev.seconds > 0 ? '+' : ''}${ev.seconds} s ${ev.lock === 'all' ? 'para todos' : `para el candado ${ev.lock}`}`);
+          toast(`${ev.seconds > 0 ? '+' : ''}${ev.seconds} s ${ev.lock === 'all' ? 'para todos' : `para el candado ${ev.lock}`}`, { icon: 'clock' });
         } else if (ev.type === 'timeout' && ev.teamId === myTeam) {
           sfx.alarm();
           vibrate([300, 100, 300]);
         } else if (ev.type === 'captain') {
-          toast(`${ev.byName} tomó el mando de esta pregunta${ev.previousName ? ` (antes: ${ev.previousName})` : ''}.`);
+          toast(`${ev.byName} tomó el mando de esta pregunta${ev.previousName ? ` (antes: ${ev.previousName})` : ''}.`, { icon: 'crown' });
         } else if (ev.type === 'podium') {
           sfx.fanfare();
         }
@@ -475,7 +475,10 @@ function LastExplanation({ item }) {
   const sol = item.solution;
   const right = q.type === 'mc' ? `${LETTERS[sol.correct]}. ${q.options[sol.correct]}` : `${sol.correct}${sol.unit ? ` ${sol.unit}` : ''}`;
   return html`<details class="card small" style=${`border-left:6px solid ${item.correct ? 'var(--green)' : 'var(--red)'}`}>
-    <summary style="cursor:pointer"><b>${item.correct ? '✓' : '✗'} Pregunta ${item.index + 1}:</b> ver explicación</summary>
+    <summary style="cursor:pointer;list-style:none;gap:.5rem" class="row nowrap">
+      <span class=${`pill ${item.correct ? 'ok' : 'bad'}`}><${Icon} name=${item.correct ? 'check' : 'x'} size=${12} />P${item.index + 1}</span>
+      <span class="grow">Ver explicación</span><span class="chev"><${Icon} name="chevron" size=${14} /></span>
+    </summary>
     <p style="margin:.5rem 0 0">Correcta: <b class="gold">${right}</b></p>
     ${sol.explanation ? html`<p class="muted" style="margin:.3rem 0 0">${sol.explanation}</p>` : null}
   </details>`;
@@ -493,8 +496,9 @@ export function ReviewList({ items }) {
       const right = sol ? (q.type === 'mc' ? `${LETTERS[sol.correct]}. ${q.options[sol.correct]}` : `${sol.correct}${sol.unit ? ` ${sol.unit}` : ''}`) : null;
       return html`<details class="card" style=${`border-left:6px solid ${it.correct ? 'var(--green)' : 'var(--red)'}`}>
         <summary style="cursor:pointer;list-style:none" class="row nowrap">
-          <span class=${`pill ${it.correct ? 'ok' : 'bad'}`}>${it.correct ? '✓' : '✗'} P${it.index + 1}</span>
+          <span class=${`pill ${it.correct ? 'ok' : 'bad'}`}><${Icon} name=${it.correct ? 'check' : 'x'} size=${12} />P${it.index + 1}</span>
           <span class="small grow" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${q.prompt}</span>
+          <span class="chev"><${Icon} name="chevron" size=${14} /></span>
         </summary>
         <div class="stack sm" style="margin-top:.7rem">
           <p style="margin:0"><${Rich} text=${q.prompt} /></p>
@@ -514,8 +518,8 @@ function MiniBoard({ pub, myTeamId }) {
     ${pub.teams.map((t) => html`<div class="row nowrap" style="gap:.6rem">
       <${LevelIcon} lock=${t.lock} size=${30} number=${false} />
       <span class="grow small" style=${t.id === myTeamId ? 'font-weight:900;color:var(--gold)' : ''}>${t.name}</span>
-      ${t.opened ? html`<span class="pill" style="font-size:.7rem">🔓 ${ordinal(t.finishSeq)}</span>`
-        : t.closedBy ? html`<span class="pill ghost" style="font-size:.7rem">⏱ cerrado</span>`
+      ${t.opened ? html`<span class="pill" style="font-size:.7rem"><${Icon} name="unlock" size=${12} />${ordinal(t.finishSeq)}</span>`
+        : t.closedBy ? html`<span class="pill ghost" style="font-size:.7rem"><${Icon} name=${t.closedBy === 'time' ? 'clock' : 'lock'} size=${12} />cerrado</span>`
         : html`<span class="small muted num">${t.answered}/${t.total}</span>`}
     </div>`)}
   </div>`;
@@ -545,7 +549,7 @@ function LockClosed({ pub, team, session, muted, toggleSound }) {
     </div>
     ${team.review
       ? html`<div class="stack sm"><h3>Revisión de su candado</h3><${ReviewList} items=${team.review} /></div>`
-      : html`<div class="card small muted">🔒 Las soluciones se desbloquean cuando todos los equipos del candado ${team.lock} terminen, para no dar pistas.</div>`}
+      : html`<div class="card small muted row nowrap" style="align-items:flex-start"><span class="gold"><${Icon} name="lock" size=${18} /></span><span>Las soluciones se desbloquean cuando todos los equipos del candado ${team.lock} terminen, para no dar pistas.</span></div>`}
     <${MiniBoard} pub=${pub} myTeamId=${team.teamId} />
     <${Footer} />
   </div>`;
