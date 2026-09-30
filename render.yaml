@@ -1,0 +1,33 @@
+# Blueprint de Render: un Web Service (Node) + un Key Value para que las partidas
+# sobrevivan a reinicios y despliegues. Uso: Render Dashboard → New → Blueprint →
+# conecta el repositorio. Render pedirá el valor de MODERATOR_KEY.
+services:
+  - type: web
+    name: escape-room-estadistico
+    runtime: node
+    plan: free # Para la clase conviene "starter": no se duerme (ver README).
+    region: virginia
+    buildCommand: npm ci --omit=dev
+    startCommand: npm start
+    healthCheckPath: /healthz
+    autoDeployTrigger: commit
+    maxShutdownDelaySeconds: 30
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: MODERATOR_KEY
+        sync: false
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: escape-room-kv
+          property: connectionString
+      - key: ROOM_TTL_HOURS
+        value: "12"
+
+  - type: keyvalue
+    name: escape-room-kv
+    plan: free
+    region: virginia
+    maxmemoryPolicy: noeviction
+    ipAllowList: [] # Solo accesible desde la red privada de Render.
