@@ -76,11 +76,11 @@ function Projector({ code }) {
   return html`<div class="theme-dark">
     <div class="projector">
       <header class="head">
-        <div class="row nowrap" style="gap:1em">
+        <div class="proj-title">
           <span class="pill">Sala ${pub.code}</span>
-          <h1 style="font-size:1.6em">${pub.title}</h1>
+          <h1>${pub.title}</h1>
         </div>
-        <div class="row nowrap" style="gap:.6em">
+        <div class="proj-head-tools">
           ${pub.phase !== 'lobby' ? html`<${JoinMini} code=${pub.code} />` : null}
           <button class="icon-btn no-print" onClick=${fullscreen} title="Pantalla completa y sonido" aria-label="Pantalla completa y sonido">
             <${Icon} name=${soundOn ? 'expand' : 'sound'} size=${20} />
@@ -121,7 +121,7 @@ function useJoinUrl(code) {
 
 function JoinMini({ code }) {
   const url = useJoinUrl(code);
-  return html`<span class="small muted" style="text-align:right">¿Llegaste tarde? Entra en <b class="gold">${url.replace(/^https?:\/\//, '').replace(/\/\?sala=.*/, '')}</b> con el código <b class="gold">${code}</b></span>`;
+  return html`<span class="small muted join-mini">¿Llegaste tarde? Entra en <b class="gold">${url.replace(/^https?:\/\//, '').replace(/\/\?sala=.*/, '')}</b> con el código <b class="gold">${code}</b></span>`;
 }
 
 function ProjectorLobby({ pub }) {
@@ -130,7 +130,7 @@ function ProjectorLobby({ pub }) {
     <section class="join-hero">
       <div class="qr-box"><img src=${`/api/rooms/${pub.code}/qr.svg?v=${pub.code}`} alt=${`Código QR para entrar a la sala ${pub.code}`} /></div>
       <div class="stack" style="gap:.8em">
-        <span class="pill" style="justify-self:start">Press start ▶ Entra desde tu celular</span>
+        <span class="pill ico-text join-pill">Press start <${Icon} name="play" size=${12} /> Entra desde tu celular</span>
         <div class="muted" style="font-size:1.3em">Escanea el QR o entra a</div>
         <div class="join-url"><b style="color:#fff">${url.replace(/\?sala=.*/, '')}</b></div>
         <div class="muted" style="font-size:1.3em">y escribe el código</div>
@@ -139,7 +139,7 @@ function ProjectorLobby({ pub }) {
     </section>
     <section class="stack sm">
       <div class="row between">
-        <h2 style="font-size:1.5em"><${Icon} name="users" /> ${pub.players.length} ${pub.players.length === 1 ? 'científico conectado' : 'científicos conectados'}</h2>
+        <h2 class="ico-text" style="font-size:1.5em"><${Icon} name="users" /> ${pub.players.length} ${pub.players.length === 1 ? 'científico conectado' : 'científicos conectados'}</h2>
         <span class="muted">Equipos de hasta ${pub.config.teamSize} · ${pub.config.questionsPerLock} preguntas por candado</span>
       </div>
       ${pub.teams.length
@@ -151,11 +151,11 @@ function ProjectorLobby({ pub }) {
 
 function TeamTile({ pub, team, lobby }) {
   const status = team.opened
-    ? html`<span class="pill" style="font-size:.8em"><${Icon} name="unlock" size=${14} />Abierto · ${ordinal(team.finishSeq)} · ${mmss(team.finishedAtMs)}</span>`
+    ? html`<div class="tile-status ok"><${Icon} name="unlock" size=${16} /><b>Abierto ${ordinal(team.finishSeq)}</b><span class="num">${mmss(team.finishedAtMs)}</span></div>`
     : team.closedBy === 'time'
-      ? html`<span class="pill ghost" style="font-size:.8em"><${Icon} name="clock" size=${14} />Tiempo agotado</span>`
+      ? html`<div class="tile-status off"><${Icon} name="clock" size=${16} /><b>Tiempo agotado</b></div>`
       : team.closedBy
-        ? html`<span class="pill ghost" style="font-size:.8em"><${Icon} name="lock" size=${14} />Cerrado</span>`
+        ? html`<div class="tile-status off"><${Icon} name="lock" size=${16} /><b>Cerrado</b></div>`
         : lobby ? null : html`<span class="small muted num">${team.answered}/${team.total} respondidas</span>`;
   const pins = Array.from({ length: team.answered }, () => ({ correct: null }));
   return html`<div class=${`team-tile ${team.opened ? 'opened' : ''} ${team.closedBy === 'time' ? 'timeout' : ''}`}>
@@ -174,11 +174,12 @@ function LockColumns({ pub, lobby = false }) {
       return html`<section class=${`lock-col c-${LOCKS[lock.id].key}`}>
         <div class="lock-col-head">
           <${LevelIcon} lock=${lock.id} size=${48} number=${false} />
-          <div class="grow">
-            <div style="font-weight:900;font-size:1.1em">Candado ${lock.id} · ${lock.name}</div>
-            <div class="small" style="opacity:.9">«${lock.title}»</div>
+          ${lobby ? html`<span class="lock-col-count">${teams.length} ${teams.length === 1 ? 'equipo' : 'equipos'}</span>` : html`<${Countdown} ms=${remainingFor(pub, lock.id)} paused=${pub.phase !== 'running'} />`}
+          <div class="lock-col-title">
+            <span class="lock-col-kicker">Candado ${lock.id}</span>
+            <b>${lock.name}</b>
+            <span class="lock-col-story">«${lock.title}»</span>
           </div>
-          ${lobby ? null : html`<${Countdown} ms=${remainingFor(pub, lock.id)} paused=${pub.phase !== 'running'} />`}
         </div>
         <div class="lock-col-body">
           ${teams.length ? teams.map((t) => html`<${TeamTile} pub=${pub} team=${t} lobby=${lobby} />`) : html`<p class="small muted center">Sin equipos</p>`}
@@ -197,8 +198,8 @@ export function speedBase(scoring, pos) {
 function OpenOrder({ pub }) {
   const opened = pub.teams.filter((t) => t.opened).sort((a, b) => a.finishSeq - b.finishSeq);
   const table = pub.config.scoring.speedTable.map((v) => dec(v, 1)).join(' · ');
-  return html`<aside class="card stack sm">
-    <h3 style="font-size:1.2em"><${Icon} name="key" cls="gold" /> Orden de apertura</h3>
+  return html`<aside class="card stack sm open-order-card">
+    <h3 class="ico-text" style="font-size:1.2em"><${Icon} name="key" cls="gold" /> Orden de apertura</h3>
     ${opened.length
       ? html`<div class="open-order">${opened.map((t) => html`<div class=${`rank-item c-${LOCKS[t.lock].key}`}>
           <span class="rank-pos">${t.finishSeq}</span>
@@ -211,7 +212,7 @@ function OpenOrder({ pub }) {
 }
 
 function Board({ pub }) {
-  return html`<main style="display:grid;gap:1.2em;grid-template-columns:minmax(0,1fr) minmax(16em,22em);align-items:start">
+  return html`<main class="proj-board">
     <${LockColumns} pub=${pub} />
     <${OpenOrder} pub=${pub} />
   </main>`;
@@ -276,24 +277,26 @@ function Podium({ pub }) {
 }
 
 export function RankingTable({ rows, light = false }) {
-  return html`<div class=${light ? '' : 'card'} style="overflow-x:auto">
-    <table class=${light ? 'table' : 'table on-dark'}>
+  const accW = `×${Math.round(rows[0]?.breakdown.weights.accuracy * 100)}\u00a0%`;
+  const spdW = `×${Math.round(rows[0]?.breakdown.weights.speed * 100)}\u00a0%`;
+  return html`<div class=${light ? 'rank-table-wrap' : 'card rank-table-wrap'}>
+    <table class=${light ? 'table rank-table' : 'table on-dark rank-table'}>
       <thead><tr>
-        <th>#</th><th>Equipo</th><th>Candado</th><th>Aciertos</th><th>Acierto ×${Math.round(rows[0]?.breakdown.weights.accuracy * 100)} %</th>
-        <th>Apertura</th><th>Velocidad ×${Math.round(rows[0]?.breakdown.weights.speed * 100)} %</th><th>Puntaje</th><th>Nota</th><th>Insignias</th>
+        <th>#</th><th>Equipo</th><th>Candado</th><th>Aciertos</th><th>Acierto ${accW}</th>
+        <th>Apertura</th><th>Velocidad ${spdW}</th><th>Puntaje</th><th>Nota</th><th>Insignias</th>
       </tr></thead>
       <tbody>
         ${rows.map((r) => html`<tr>
-          <td><b class=${light ? '' : 'gold'} style="font-size:1.2em">${r.position}</b></td>
-          <td><b>${r.name}</b>${r.tiebreak ? html`<div class="tiny" style="opacity:.75">${r.tiebreak}</div>` : null}</td>
-          <td><${LockPill} lock=${r.lock} /></td>
-          <td>${r.correct}/${r.total} (${dec(r.breakdown.accuracyPoints, 0)})</td>
-          <td>${dec(r.breakdown.accuracy5)} → <b>${dec(r.breakdown.accuracyPart)}</b></td>
-          <td>${r.opened ? ordinal(r.breakdown.speedPosition) : r.closedBy === 'time' ? html`<span title="Tiempo agotado"><${Icon} name="clock" size=${14} /></span>` : '—'}</td>
-          <td>${dec(r.breakdown.speed, 1)} → <b>${dec(r.breakdown.speedPart)}</b></td>
-          <td>${dec(r.score)}</td>
-          <td><span class="grade-chip">${grade(r.grade)}</span></td>
-          <td class="small">${r.badges.map((b) => b.label).join(' · ') || '—'}</td>
+          <td class="rk-pos"><b class=${light ? '' : 'gold'} style="font-size:1.2em">${r.position}</b></td>
+          <td class="rk-name"><b>${r.name}</b>${r.tiebreak ? html`<div class="tiny" style="opacity:.75">${r.tiebreak}</div>` : null}</td>
+          <td class="rk-lock"><${LockPill} lock=${r.lock} /></td>
+          <td class="rk-acc" data-label="Aciertos">${r.correct}/${r.total} (${dec(r.breakdown.accuracyPoints, 0)})</td>
+          <td class="rk-accp" data-label=${`Acierto ${accW}`}>${dec(r.breakdown.accuracy5)} → <b>${dec(r.breakdown.accuracyPart)}</b></td>
+          <td class="rk-open" data-label="Apertura">${r.opened ? ordinal(r.breakdown.speedPosition) : r.closedBy === 'time' ? html`<span title="Tiempo agotado"><${Icon} name="clock" size=${14} /></span>` : '—'}</td>
+          <td class="rk-spd" data-label=${`Velocidad ${spdW}`}>${dec(r.breakdown.speed, 1)} → <b>${dec(r.breakdown.speedPart)}</b></td>
+          <td class="rk-score" data-label="Puntaje">${dec(r.score)}</td>
+          <td class="rk-grade"><span class="grade-chip">${grade(r.grade)}</span></td>
+          <td class="rk-badges small" data-label="Insignias">${r.badges.map((b) => b.label).join(' · ') || '—'}</td>
         </tr>`)}
       </tbody>
     </table>
@@ -306,7 +309,7 @@ function Debate({ pub }) {
   const [endAt, setEndAt] = useState(null);
   useTick(250, !!endAt);
   const left = endAt ? Math.max(0, endAt - Date.now()) : 60_000;
-  return html`<div class="grid-2" style="grid-template-columns:minmax(0,1.3fr) minmax(0,1fr)">
+  return html`<div class="debate-grid">
     <div class="card stack">
       <h2 style="font-size:1.5em">Las preguntas que más costaron</h2>
       ${hardest.length === 0 ? html`<p class="muted">No hubo respuestas.</p>` : null}
