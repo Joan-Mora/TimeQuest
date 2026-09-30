@@ -92,8 +92,8 @@ El repositorio incluye [`render.yaml`](render.yaml) (Blueprint). Crea dos recurs
 
 ### Paso a paso
 
-1. Sube el proyecto a GitHub, GitLab o Bitbucket (la carpeta `.data/` y `node_modules/` ya están en `.gitignore`).
-2. En el [Dashboard de Render](https://dashboard.render.com): **New → Blueprint**, elige el repositorio y confirma.
+1. El código está en el repositorio privado [Joan-Mora/TimeQuest](https://github.com/Joan-Mora/TimeQuest). Las carpetas `.data/` y `node_modules/` y el PDF de la exposición quedan fuera por `.gitignore`.
+2. En el [Dashboard de Render](https://dashboard.render.com): **New → Blueprint**, conecta tu cuenta de GitHub (Render pedirá permiso para ver el repositorio privado), elige `TimeQuest` y confirma. Cada `git push` a `main` vuelve a desplegar automáticamente.
 3. Render te pedirá el valor de **`MODERATOR_KEY`**. Usa una clave de al menos 6 caracteres que no sea `profe123`.
 4. Espera a que el despliegue termine y abre `https://<tu-servicio>.onrender.com/healthz`. Debe responder `{"ok":true,...}` e indicar `"store":"redis"`.
 5. Entra a `https://<tu-servicio>.onrender.com/moderador` con tu clave.
