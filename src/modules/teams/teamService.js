@@ -1,8 +1,12 @@
 import { shortId } from '../../lib/ids.js';
 import { DomainError } from '../../lib/errors.js';
-import { addLog, orderedTeams, teamMembers } from '../rooms/roomModel.js';
+import { addLog, isChaos, orderedTeams, teamMembers } from '../rooms/roomModel.js';
 import { lockForTeamIndex, planTeams, smallestTeam, teamName } from './teamAssignment.js';
-import { initTeamProgress } from '../game/gameEngine.js';
+import { createSoloTeam, initTeamProgress } from '../game/gameEngine.js';
+
+function assertTeamsMode(room) {
+  if (isChaos(room)) throw new DomainError('En modo Caos no hay equipos: cada jugador compite solo.');
+}
 
 export function createTeam(room, { name, lock } = {}) {
   const index = room.teamOrder.length;
@@ -20,6 +24,7 @@ export function createTeam(room, { name, lock } = {}) {
 
 /** Arma los equipos automáticamente (aleatorio) con todos los jugadores. Solo en el lobby. */
 export function autoAssign(room, { teamCount, keepOrder = false } = {}) {
+  assertTeamsMode(room);
   if (room.phase !== 'lobby') throw new DomainError('Solo se pueden rearmar equipos antes de iniciar.');
   const players = Object.values(room.players).sort((a, b) => a.joinedAt - b.joinedAt);
   if (players.length === 0) throw new DomainError('Todavía no hay jugadores conectados.');
@@ -40,6 +45,7 @@ export function autoAssign(room, { teamCount, keepOrder = false } = {}) {
 }
 
 export function movePlayer(room, playerId, teamId) {
+  assertTeamsMode(room);
   const player = room.players[playerId];
   if (!player) throw new DomainError('Jugador no encontrado.');
   if (teamId !== null && !room.teams[teamId]) throw new DomainError('Equipo no encontrado.');
@@ -51,6 +57,7 @@ export function movePlayer(room, playerId, teamId) {
 }
 
 export function renameTeam(room, teamId, name) {
+  assertTeamsMode(room);
   const team = room.teams[teamId];
   if (!team) throw new DomainError('Equipo no encontrado.');
   const clean = String(name || '').trim().slice(0, 32);
@@ -60,6 +67,7 @@ export function renameTeam(room, teamId, name) {
 }
 
 export function setTeamLock(room, teamId, lock) {
+  assertTeamsMode(room);
   const team = room.teams[teamId];
   if (!team) throw new DomainError('Equipo no encontrado.');
   if (room.phase !== 'lobby') throw new DomainError('El candado solo se cambia antes de iniciar.');
@@ -69,6 +77,7 @@ export function setTeamLock(room, teamId, lock) {
 }
 
 export function deleteTeam(room, teamId) {
+  assertTeamsMode(room);
   if (room.phase !== 'lobby') throw new DomainError('Los equipos solo se eliminan antes de iniciar.');
   if (!room.teams[teamId]) throw new DomainError('Equipo no encontrado.');
   for (const p of Object.values(room.players)) if (p.teamId === teamId) p.teamId = null;
@@ -77,6 +86,7 @@ export function deleteTeam(room, teamId) {
 }
 
 export function addTeam(room) {
+  assertTeamsMode(room);
   if (room.phase !== 'lobby') throw new DomainError('Los equipos se crean antes de iniciar.');
   if (room.teamOrder.length >= 16) throw new DomainError('Máximo 16 equipos.');
   return createTeam(room);
@@ -85,8 +95,15 @@ export function addTeam(room) {
 /**
  * Ubica a un jugador sin equipo: en el lobby solo si ya existen equipos;
  * en partida, en el equipo con menos integrantes (si la sala lo permite).
+ * En Caos, quien llega con la partida en curso entra solo con el reloj que quede.
  */
 export function placeLatePlayer(room, playerId, { force = false } = {}) {
+  if (isChaos(room)) {
+    if (!['running', 'paused'].includes(room.phase) || !room.game) return null;
+    const team = createSoloTeam(room, room.players[playerId]);
+    initTeamProgress(room, team);
+    return team;
+  }
   const teams = orderedTeams(room);
   if ((!room.config.autoAssignLate && !force) || teams.length === 0) return null;
   const target = smallestTeam(teams, (t) => teamMembers(room, t.id).length);

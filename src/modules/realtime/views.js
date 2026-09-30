@@ -4,8 +4,8 @@
  * cuando las reglas de revelado lo permiten.
  */
 import { elapsedMs, lockLimitMs } from '../timer/clock.js';
-import { orderedTeams, teamMembers } from '../rooms/roomModel.js';
-import { CLAIM_AFTER_MS, captainOf, isClosed, liveRanking, questionStartMs } from '../game/gameEngine.js';
+import { CHAOS_LOCK, isChaos, orderedTeams, teamMembers } from '../rooms/roomModel.js';
+import { CHAOS_META, CLAIM_AFTER_MS, captainOf, chaosAlive, isClosed, liveRanking, questionStartMs } from '../game/gameEngine.js';
 import { publicQuestion, revealedSolution } from '../questions/questionBank.js';
 import { liveXp } from '../scoring/scoring.js';
 
@@ -13,7 +13,18 @@ function openedPosition(progress) {
   return progress && progress.closedBy === null && progress.finishSeq !== null ? progress.finishSeq : null;
 }
 
+/** En Caos hay un único «candado» (id 0) con los cuatro temas y un solo reloj para todos. */
 function locksView(room, bank) {
+  if (isChaos(room)) {
+    const perLock = room.config.questionsPerLock;
+    const available = (bank.questions ?? []).filter((q) => q.active !== false);
+    const expected = [1, 2, 3, 4].reduce((n, l) => n + Math.min(perLock, available.filter((q) => q.lock === l).length), 0);
+    return [{
+      ...CHAOS_META,
+      limitMs: lockLimitMs(room.clock, room.config.timeLimitsSec, CHAOS_LOCK),
+      questionCount: room.game?.byLock[CHAOS_LOCK]?.length ?? expected,
+    }];
+  }
   return (room.game?.locks ?? bank.locks).map((l) => ({
     id: l.id,
     name: l.name,
@@ -35,6 +46,7 @@ function publicResults(results) {
   return {
     computedAt: results.computedAt,
     scoring: results.scoring,
+    mode: results.mode ?? 'teams',
     teams: results.teams,
     questionStats: results.questionStats,
   };
@@ -43,6 +55,8 @@ function publicResults(results) {
 function baseConfig(room) {
   const c = room.config;
   return {
+    mode: c.mode ?? 'teams',
+    chaosLives: c.chaosLives ?? 3,
     teamSize: c.teamSize,
     teamCount: c.teamCount,
     questionsPerLock: c.questionsPerLock,
@@ -62,6 +76,9 @@ export function publicView(room, { bank, isOnline, now = Date.now() }) {
       id: t.id,
       name: t.name,
       lock: t.lock,
+      solo: !!t.solo,
+      lives: p?.lives ?? null,
+      livesLost: p?.livesLost ?? 0,
       members: teamMembers(room, t.id).map((m) => ({ id: m.id, name: m.name, online: isOnline(m.id) })),
       answered: p?.answers.length ?? 0,
       total: p?.order.length ?? room.config.questionsPerLock,
@@ -84,6 +101,7 @@ export function publicView(room, { bank, isOnline, now = Date.now() }) {
     clock: clockView(room, now),
     locks: locksView(room, bank),
     teams,
+    chaos: isChaos(room) && room.game ? chaosAlive(room) : null,
     players: Object.values(room.players)
       .sort((a, b) => a.joinedAt - b.joinedAt)
       .map((p) => ({ id: p.id, name: p.name, teamId: p.teamId, online: isOnline(p.id) })),
@@ -103,12 +121,12 @@ function reviewUnlocked(room, team) {
 export function teamView(room, team, { isOnline, now = Date.now() }) {
   const p = team.progress;
   const members = teamMembers(room, team.id).map((m) => ({ id: m.id, name: m.name, online: isOnline(m.id) }));
-  const base = { teamId: team.id, name: team.name, lock: team.lock, members, serverNow: now };
+  const base = { teamId: team.id, name: team.name, lock: team.lock, solo: !!team.solo, members, serverNow: now };
   if (!p || !room.game) return { ...base, started: false };
 
   const mode = room.config.feedbackMode;
   const closed = isClosed(p);
-  const showVerdict = mode !== 'end' || room.phase === 'finished';
+  const showVerdict = mode !== 'end' || room.phase === 'finished' || !!team.solo;
   const unlocked = reviewUnlocked(room, team);
   const solutionsNow = mode === 'instant' || unlocked;
   const nameOf = (id) => room.players[id]?.name ?? 'Alguien';
@@ -160,6 +178,9 @@ export function teamView(room, team, { isOnline, now = Date.now() }) {
     closedBy: p.closedBy,
     finishSeq: p.finishSeq,
     finishedAtMs: p.finishedAtMs,
+    lives: p.lives ?? null,
+    livesLost: p.livesLost ?? 0,
+    eliminatedSeq: p.eliminatedSeq ?? null,
     captainId: closed ? null : captainOf(room, team, isOnline),
     claimAtMs: closed ? null : questionStartMs(p) + CLAIM_AFTER_MS,
     question,

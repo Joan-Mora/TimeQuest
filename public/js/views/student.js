@@ -5,11 +5,21 @@ import { LETTERS, LOCKS, grade, dec, ordinal, mmss } from '../lib/format.js';
 import { sfx, unlockAudio, vibrate, isMuted, setMuted } from '../lib/sound.js';
 import {
   Avatar, BadgeList, Confetti, ConnectionBanner, Countdown, Difficulty, Footer, Hearts, Icon, LevelIcon,
-  LockPill, MemberChip, Padlock, Pins, Rich, SoundToggle, Toasts, XpBar, useToasts,
+  LockPill, MathText, MemberChip, Padlock, Pins, Rich, SoundToggle, Toasts, XpBar, useToasts,
 } from '../components/ui.js';
 import { rankTitle } from './shared.js';
 
 const SESSION_KEY = 'erlab:session';
+
+/** Identificador estable del navegador: en el Caos permite recuperar al mismo jugador en vez de crear uno con vidas nuevas. */
+function deviceId() {
+  let id = localStorage.getItem('erlab:device');
+  if (!id) {
+    id = [...crypto.getRandomValues(new Uint8Array(16))].map((b) => b.toString(16).padStart(2, '0')).join('');
+    localStorage.setItem('erlab:device', id);
+  }
+  return id;
+}
 
 function loadSession() {
   try {
@@ -58,7 +68,7 @@ function JoinScreen({ initialCode, onJoined }) {
     if (c.length < 4) return setError('Escribe el código de la sala que aparece en el proyector.');
     if (name.trim().length < 2) return setError('Escribe tu nombre (mínimo 2 letras).');
     setBusy(true);
-    const res = await api(`/api/rooms/${encodeURIComponent(c)}/join`, { method: 'POST', body: { name } });
+    const res = await api(`/api/rooms/${encodeURIComponent(c)}/join`, { method: 'POST', body: { name, device: deviceId() } });
     setBusy(false);
     if (!res.ok) return setError(res.error || 'No se pudo entrar.');
     localStorage.setItem('erlab:lastName', name.trim());
@@ -118,15 +128,21 @@ function PlayScreen({ session, onExit }) {
     {
       onEvent: (ev) => {
         const myTeam = connRef.current?.team?.teamId;
+        const solo = ev.livesLeft !== null && ev.livesLeft !== undefined;
         if (ev.type === 'answer') {
-          if (ev.correct === true) {
+          if (ev.eliminated) {
+            sfx.alarm();
+            vibrate([300, 100, 300, 100, 500]);
+          } else if (ev.correct === true) {
             sfx.correct();
             vibrate(60);
-            showFlash({ kind: 'ok', title: '¡Correcto!', sub: `+100 XP · confirmó ${ev.byName}` });
+            showFlash({ kind: 'ok', title: '¡Correcto!', sub: solo ? '+100 XP' : `+100 XP · confirmó ${ev.byName}` });
           } else if (ev.correct === false) {
             sfx.wrong();
             vibrate([80, 60, 80]);
-            showFlash({ kind: 'bad', title: 'Incorrecto', sub: `Confirmó ${ev.byName}. ¡Sigan!` });
+            showFlash(solo
+              ? { kind: 'bad', icon: 'heart', title: 'Pierdes una vida', sub: ev.livesLeft === 1 ? '¡Te queda la última!' : `Te quedan ${ev.livesLeft} vidas.` }
+              : { kind: 'bad', title: 'Incorrecto', sub: `Confirmó ${ev.byName}. ¡Sigan!` });
           } else {
             sfx.neutral();
             showFlash({ kind: 'neutral', title: 'Respuesta registrada', sub: 'Los resultados se revelan al final' });
@@ -136,13 +152,15 @@ function PlayScreen({ session, onExit }) {
             sfx.unlock();
             vibrate([100, 50, 100, 50, 200]);
           } else {
-            toast(`«${ev.name}» abrió el candado ${ev.lock} (${ordinal(ev.seq)})`, { icon: 'unlock' });
+            toast(ev.solo ? `${ev.name} sobrevivió al Caos (${ordinal(ev.seq)})` : `«${ev.name}» abrió el candado ${ev.lock} (${ordinal(ev.seq)})`, { icon: 'unlock' });
           }
+        } else if (ev.type === 'eliminated') {
+          if (ev.teamId !== myTeam) toast(`${ev.name} cayó · quedan ${ev.alive} de ${ev.total} en pie`, { icon: 'heart', group: 'out' });
         } else if (ev.type === 'started') {
           sfx.start();
           vibrate(150);
         } else if (ev.type === 'time') {
-          toast(`${ev.seconds > 0 ? '+' : ''}${ev.seconds} s ${ev.lock === 'all' ? 'para todos' : `para el candado ${ev.lock}`}`, { icon: 'clock' });
+          toast(`${ev.seconds > 0 ? '+' : ''}${ev.seconds} s ${ev.lock === 'all' || Number(ev.lock) === 0 ? 'para todos' : `para el candado ${ev.lock}`}`, { icon: 'clock' });
         } else if (ev.type === 'timeout' && ev.teamId === myTeam) {
           sfx.alarm();
           vibrate([300, 100, 300]);
@@ -158,7 +176,7 @@ function PlayScreen({ session, onExit }) {
   connRef.current = conn;
 
   if (conn.fatal) {
-    return html`<div class="theme-dark"><div class="cover" style="justify-items:center;text-align:center">
+    return html`<div class="theme-dark"><div class="cover notice">
       <${Padlock} color="#d62f4f" size=${110} />
       <h1>No pudimos reconectarte</h1>
       <p class="muted">${conn.fatal.message}</p>
@@ -193,6 +211,7 @@ function PlayScreen({ session, onExit }) {
 
   return html`<div class="theme-dark">
     ${body}
+    ${pub && team ? html`<${GameOver} pub=${pub} team=${team} session=${session} />` : null}
     ${pub?.phase === 'paused'
       ? html`<div class="overlay" role="alertdialog" aria-label="Partida en pausa"><div class="panel">
           <span class="lvl-icon c-boss" style="--size:84px"><${Icon} name="pause" size=${40} /></span>
@@ -203,7 +222,7 @@ function PlayScreen({ session, onExit }) {
     ${flash
       ? html`<div key=${flash.key} class=${`flash ${flash.kind}`} role="status" aria-live="assertive">
           <div class="badge-big">
-            <span class="big-icon">${flash.kind === 'ok' ? html`<${Icon} name="check" size=${44} />` : flash.kind === 'bad' ? html`<${Icon} name="x" size=${44} />` : html`<${Icon} name="lock" size=${40} />`}</span>
+            <span class="big-icon">${flash.icon ? html`<${Icon} name=${flash.icon} size=${40} />` : flash.kind === 'ok' ? html`<${Icon} name="check" size=${44} />` : flash.kind === 'bad' ? html`<${Icon} name="x" size=${44} />` : html`<${Icon} name="lock" size=${40} />`}</span>
             <strong style="font-size:1.6rem">${flash.title}</strong>
             <span class="muted small">${flash.sub}</span>
           </div>
@@ -219,6 +238,18 @@ function PlayScreen({ session, onExit }) {
 // ---------------------------------------------------------------------------
 function HowToPlay({ pub }) {
   const w = pub.config.scoring.weights;
+  if (pub.config.mode === 'chaos') {
+    const lives = pub.config.chaosLives;
+    return html`<div class="card stack sm">
+      <h3>Cómo se juega el Caos</h3>
+      <ol class="small" style="margin:0;padding-left:1.2rem;display:grid;gap:.35rem">
+        <li><b>Juegas solo</b>: sin equipos, todos contra todos con las preguntas de los <b>4 temas mezcladas</b>.</li>
+        <li>Empiezas con <b>${lives} ${lives === 1 ? 'vida' : 'vidas'}</b> <span style="color:var(--red)"><${Icon} name="heart" size=${14} /></span>. Cada respuesta incorrecta cuesta una; sin vidas, quedas <b>eliminado</b>.</li>
+        <li>Sobrevive quien responda todas antes de que se acabe el reloj común. ¡Terminar primero da más puntos!</li>
+      </ol>
+      <p class="small muted" style="margin:0">Nota individual = <b class="gold">${Math.round(w.accuracy * 100)} % acierto</b> + <b class="gold">${Math.round(w.speed * 100)} % velocidad</b> (1.º en terminar: 5,0 · 2.º: 4,5 · 3.º: 4,0 …). Si caes, resistir más tiempo te ubica mejor en el ranking.</p>
+    </div>`;
+  }
   return html`<div class="card stack sm">
     <h3>Cómo se juega</h3>
     <ol class="small" style="margin:0;padding-left:1.2rem;display:grid;gap:.35rem">
@@ -248,6 +279,28 @@ function TeamCard({ pub, team, session, captainId }) {
   </div>`;
 }
 
+function ChaosCard({ pub }) {
+  const lock = pub.locks[0];
+  return html`<div class="card accent c-l0 stack">
+    <div class="row nowrap">
+      <${LevelIcon} lock=${0} size=${60} />
+      <div class="grow">
+        <div class="label">Modo de juego</div>
+        <h2 style="font-size:1.4rem">Caos · todos contra todos</h2>
+        <div class="row" style="gap:.4rem;margin-top:.3rem">
+          ${[1, 2, 3, 4].map((l) => html`<span class=${`pill ${LOCKS[l].key}`} style="font-size:.66rem">${LOCKS[l].short}</span>`)}
+        </div>
+      </div>
+    </div>
+    <p class="small muted" style="margin:0">${lock?.story}</p>
+    <div class="row between">
+      <span class="small"><b>${lock?.questionCount ?? '—'}</b> preguntas · <b>${mmss(lock?.limitMs ?? 0)}</b> para todos</span>
+      <${Hearts} total=${pub.config.chaosLives} />
+    </div>
+    <p class="small gold" style="margin:0"><b>Esperando a que el moderador inicie el Caos</b><span class="waiting-dots"></span></p>
+  </div>`;
+}
+
 function Lobby({ pub, team, session, onExit, muted, toggleSound }) {
   const pubTeam = pub.teams.find((t) => t.members.some((m) => m.id === session.playerId));
   return html`<div class="wrap stack">
@@ -262,9 +315,11 @@ function Lobby({ pub, team, session, onExit, muted, toggleSound }) {
         <p class="muted small" style="margin:0">${pub.players.length} ${pub.players.length === 1 ? 'científico conectado' : 'científicos conectados'}</p>
       </div>
     </div>
-    ${pubTeam
-      ? html`<${TeamCard} pub=${pub} team=${pubTeam} session=${session} />`
-      : html`<div class="card center stack sm" style="justify-items:center"><${Padlock} size=${80} /><p><b>Esperando a que el moderador arme los equipos</b><span class="waiting-dots"></span></p><p class="small muted">Equipos de hasta ${pub.config.teamSize}. No cierres esta página.</p></div>`}
+    ${pub.config.mode === 'chaos'
+      ? html`<${ChaosCard} pub=${pub} />`
+      : pubTeam
+        ? html`<${TeamCard} pub=${pub} team=${pubTeam} session=${session} />`
+        : html`<div class="card center stack sm" style="justify-items:center"><${Padlock} size=${80} /><p><b>Esperando a que el moderador arme los equipos</b><span class="waiting-dots"></span></p><p class="small muted">Equipos de hasta ${pub.config.teamSize}. No cierres esta página.</p></div>`}
     <${HowToPlay} pub=${pub} />
     <button class="btn link small muted" onClick=${onExit}>Salir de la sala</button>
     <${Footer} />
@@ -272,10 +327,11 @@ function Lobby({ pub, team, session, onExit, muted, toggleSound }) {
 }
 
 function NoTeam({ pub }) {
+  const chaos = pub.config.mode === 'chaos';
   return html`<div class="cover center" style="justify-items:center">
     <${Padlock} size=${90} />
-    <h2>La partida ya empezó</h2>
-    <p class="muted">El moderador te asignará a un equipo en un momento<span class="waiting-dots"></span></p>
+    <h2>${chaos && pub.phase === 'finished' ? 'El Caos ya terminó' : 'La partida ya empezó'}</h2>
+    <p class="muted">${chaos ? 'Entrando al Caos' : 'El moderador te asignará a un equipo en un momento'}<span class="waiting-dots"></span></p>
     <p class="small muted">Sala ${pub.code}</p>
   </div>`;
 }
@@ -297,11 +353,15 @@ function GameHeader({ pub, team, muted, toggleSound }) {
   const wrong = team.history.filter((h) => h.correct === false).length;
   return html`<div class="game-top">
     <div class="hud">
-      <span class=${`pill ${LOCKS[team.lock].key}`} title=${`Candado ${team.lock} · ${lock?.name ?? LOCKS[team.lock].short}`}>
-        <span class="pill-long">Candado </span><span class="pill-short">C</span>${team.lock} · ${lock?.name ?? LOCKS[team.lock].short}
-      </span>
+      ${team.solo
+        ? html`<span class="pill l0"><${Icon} name="bolt" size=${12} />Caos${pub.chaos ? html` · <span class="num">${pub.chaos.alive}/${pub.chaos.total}</span> en pie` : null}</span>`
+        : html`<span class=${`pill ${LOCKS[team.lock].key}`} title=${`Candado ${team.lock} · ${lock?.name ?? LOCKS[team.lock].short}`}>
+            <span class="pill-long">Candado </span><span class="pill-short">C</span>${team.lock} · ${lock?.name ?? LOCKS[team.lock].short}
+          </span>`}
       <div class="row nowrap" style="gap:.6rem">
-        ${team.correct !== null ? html`<${Hearts} lost=${Math.min(3, wrong)} />` : null}
+        ${team.solo
+          ? html`<${Hearts} lost=${team.livesLost} total=${team.lives} />`
+          : team.correct !== null ? html`<${Hearts} lost=${Math.min(3, wrong)} />` : null}
         <${SoundToggle} muted=${muted} onToggle=${toggleSound} />
       </div>
     </div>
@@ -391,22 +451,25 @@ function Game({ pub, team, session, call, toast, muted, toggleSound }) {
   return html`<div class="game">
     <${GameHeader} pub=${pub} team=${team} muted=${muted} toggleSound=${toggleSound} />
     <main class="game-main">
-      <div class="row nowrap" style="gap:.4rem;overflow-x:auto;padding-top:10px">
-        ${team.members.map((m) => html`<${Avatar} id=${m.id} name=${m.name} size=${34} online=${m.online} captain=${m.id === team.captainId}
-          title=${`${m.name}${m.id === team.captainId ? ' (capitán)' : ''}${team.votes.some((v) => v.playerId === m.id) ? ' · ya votó' : ''}`} />`)}
-        <span class="small muted" style="margin-left:.4rem;white-space:nowrap">${team.votes.length}/${online} votaron</span>
-      </div>
+      ${team.solo
+        ? null
+        : html`<div class="row nowrap" style="gap:.4rem;overflow-x:auto;padding-top:10px">
+            ${team.members.map((m) => html`<${Avatar} id=${m.id} name=${m.name} size=${34} online=${m.online} captain=${m.id === team.captainId}
+              title=${`${m.name}${m.id === team.captainId ? ' (capitán)' : ''}${team.votes.some((v) => v.playerId === m.id) ? ' · ya votó' : ''}`} />`)}
+            <span class="small muted" style="margin-left:.4rem;white-space:nowrap">${team.votes.length}/${online} votaron</span>
+          </div>`}
       ${team.feedbackMode === 'instant' && team.history.length && team.history[team.history.length - 1].solution
         ? html`<${LastExplanation} item=${team.history[team.history.length - 1]} />`
         : null}
       <section class="question-card" aria-labelledby="qprompt">
         <div class="question-meta">
           <span>Pregunta ${q.index + 1} de ${team.total}</span>
+          ${team.solo && LOCKS[q.lock] ? html`<span class=${`pill ${LOCKS[q.lock].key}`} style="font-size:.66rem"><${Icon} name=${LOCKS[q.lock].icon} size=${12} />${LOCKS[q.lock].short}</span>` : null}
           <${Difficulty} level=${q.difficulty} />
         </div>
         <p id="qprompt" class="question-prompt" style="margin:0"><${Rich} text=${q.prompt} /></p>
         ${q.data ? html`<div class="data-box"><${Rich} text=${q.data} /></div>` : null}
-        ${q.hint ? html`<p class="hint"><b>Pista:</b> ${q.hint}</p>` : null}
+        ${q.hint ? html`<p class="hint"><b>Pista:</b> <${Rich} text=${q.hint} /></p>` : null}
       </section>
 
       ${q.type === 'mc'
@@ -414,11 +477,11 @@ function Game({ pub, team, session, call, toast, muted, toggleSound }) {
             ${q.options.map((opt, i) => {
               const voters = votesByValue.get(i)?.voters ?? [];
               const captainPick = team.votes.find((v) => v.playerId === team.captainId)?.value === i;
-              return html`<button key=${i} role="radio" aria-checked=${myVote === i} class=${`option ${myVote === i ? 'mine' : ''} ${captainPick ? 'captain-pick' : ''}`}
+              return html`<button key=${i} role="radio" aria-checked=${myVote === i} class=${`option ${myVote === i ? 'mine' : ''} ${captainPick ? `captain-pick${team.solo ? ' solo-pick' : ''}` : ''}`}
                 onClick=${() => vote(i)} disabled=${submitting}>
                 <span class="letter">${LETTERS[i]}</span>
                 <span><${Rich} text=${opt} /></span>
-                ${voters.length
+                ${voters.length && !team.solo
                   ? html`<span class="voters">${voters.map((id) => nameOf(id) && html`<${Avatar} id=${id} name=${nameOf(id).name} size=${24} />`)}</span>`
                   : null}
               </button>`;
@@ -432,23 +495,29 @@ function Game({ pub, team, session, call, toast, muted, toggleSound }) {
               <label class="sr-only" for="num">Tu respuesta numérica</label>
               <input id="num" class="input" inputmode="decimal" autocomplete="off" placeholder=${q.unit ? `Respuesta en ${q.unit}` : 'Tu respuesta'}
                 value=${numInput} onInput=${(e) => setNumInput(e.target.value)} maxlength="20" />
-              <button class="btn" disabled=${!numInput.trim() || submitting}>Proponer</button>
+              <button class="btn" disabled=${!numInput.trim() || submitting}>${team.solo ? 'Elegir' : 'Proponer'}</button>
             </form>
-            <p class="tiny muted" style="margin:0">Puedes usar punto o coma decimal. Toca una propuesta para apoyarla.</p>
+            <p class="tiny muted" style="margin:0">Puedes usar punto o coma decimal.${team.solo ? '' : ' Toca una propuesta para apoyarla.'}</p>
             <div class="proposals">
               ${[...votesByValue.entries()].sort((a, b) => b[1].voters.length - a[1].voters.length).map(([key, g]) => html`
                 <button class=${`proposal ${myKey === key ? 'mine' : ''}`} onClick=${() => vote(g.value)} disabled=${submitting}>
                   <span class="val">${g.value}${q.unit ? html` <span class="small muted">${q.unit}</span>` : null}</span>
-                  <span class="row nowrap" style="gap:4px">${g.voters.map((id) => nameOf(id) && html`<${Avatar} id=${id} name=${nameOf(id).name} size=${24} captain=${id === team.captainId} />`)}</span>
+                  <span class="row nowrap" style="gap:4px">${team.solo ? null : g.voters.map((id) => nameOf(id) && html`<${Avatar} id=${id} name=${nameOf(id).name} size=${24} captain=${id === team.captainId} />`)}</span>
                 </button>`)}
-              ${votesByValue.size === 0 ? html`<p class="small muted center">Aún no hay propuestas. ¡Calculen y propongan!</p>` : null}
+              ${votesByValue.size === 0 ? html`<p class="small muted center">${team.solo ? 'Escribe tu resultado y pulsa «Elegir».' : 'Aún no hay propuestas. ¡Calculen y propongan!'}</p>` : null}
             </div>
           </div>`}
     </main>
 
     <div class="captain-bar">
       <div class="inner">
-        ${isCaptain
+        ${team.solo
+          ? html`
+            <div class="captain-info"><span style="color:var(--red)"><${Icon} name="heart" size=${18} /></span> <span>${team.lives - team.livesLost === 1 ? html`<b>Última vida.</b> Piénsalo bien.` : html`Cada error cuesta una vida · te quedan <b>${team.lives - team.livesLost}</b>.`}</span></div>
+            <button class="btn block lg" onClick=${confirm} disabled=${myKey === null || submitting || pub.phase !== 'running'}>
+              ${submitting ? 'Confirmando…' : myKey === null ? 'Elige una respuesta' : html`Confirmar ${display(myVote)} <${Icon} name="lock" size=${16} />`}
+            </button>`
+          : isCaptain
           ? html`
             <div class="captain-info"><${Icon} name="crown" size=${18} cls="gold" /> <span><b>Eres el capitán</b> de esta pregunta: tú confirmas.</span></div>
             ${disagree ? html`<div class="small" style="color:#ffd27a">La mayoría propone <b>${display(top.value)}</b>. ¿Seguro?</div>` : null}
@@ -479,15 +548,15 @@ function LastExplanation({ item }) {
       <span class=${`pill ${item.correct ? 'ok' : 'bad'}`}><${Icon} name=${item.correct ? 'check' : 'x'} size=${12} />P${item.index + 1}</span>
       <span class="grow">Ver explicación</span><span class="chev"><${Icon} name="chevron" size=${14} /></span>
     </summary>
-    <p style="margin:.5rem 0 0">Correcta: <b class="gold">${right}</b></p>
-    ${sol.explanation ? html`<p class="muted" style="margin:.3rem 0 0">${sol.explanation}</p>` : null}
+    <p style="margin:.5rem 0 0">Correcta: <b class="gold"><${MathText} text=${right} /></b></p>
+    ${sol.explanation ? html`<p class="muted" style="margin:.3rem 0 0"><${Rich} text=${sol.explanation} /></p>` : null}
   </details>`;
 }
 
 // ---------------------------------------------------------------------------
 // Candado cerrado (abierto por el equipo, por tiempo o por el moderador)
 // ---------------------------------------------------------------------------
-export function ReviewList({ items }) {
+export function ReviewList({ items, solo = false }) {
   return html`<div class="stack sm">
     ${items.map((it) => {
       const q = it.question;
@@ -497,22 +566,49 @@ export function ReviewList({ items }) {
       return html`<details class="card" style=${`border-left:6px solid ${it.correct ? 'var(--green)' : 'var(--red)'}`}>
         <summary style="cursor:pointer;list-style:none" class="row nowrap">
           <span class=${`pill ${it.correct ? 'ok' : 'bad'}`}><${Icon} name=${it.correct ? 'check' : 'x'} size=${12} />P${it.index + 1}</span>
-          <span class="small grow" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${q.prompt}</span>
+          <span class="small grow" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><${MathText} text=${q.prompt} /></span>
           <span class="chev"><${Icon} name="chevron" size=${14} /></span>
         </summary>
         <div class="stack sm" style="margin-top:.7rem">
           <p style="margin:0"><${Rich} text=${q.prompt} /></p>
-          ${q.data ? html`<div class="data-box">${q.data}</div>` : null}
-          <p class="small" style="margin:0">Respuesta del equipo: <b>${yours}</b>${it.byName ? html` <span class="muted">(confirmó ${it.byName})</span>` : null}</p>
-          ${right ? html`<p class="small" style="margin:0">Respuesta correcta: <b class="gold">${right}</b></p>` : null}
-          ${sol?.explanation ? html`<div class="ok-box small"><b>Paso a paso:</b> ${sol.explanation}</div>` : null}
+          ${q.data ? html`<div class="data-box"><${Rich} text=${q.data} /></div>` : null}
+          <p class="small" style="margin:0">${solo ? 'Tu respuesta' : 'Respuesta del equipo'}: <b><${MathText} text=${yours} /></b>${it.byName && !solo ? html` <span class="muted">(confirmó ${it.byName})</span>` : null}</p>
+          ${right ? html`<p class="small" style="margin:0">Respuesta correcta: <b class="gold"><${MathText} text=${right} /></b></p>` : null}
+          ${sol?.explanation ? html`<div class="ok-box small"><b>Paso a paso:</b> <${Rich} text=${sol.explanation} /></div>` : null}
         </div>
       </details>`;
     })}
   </div>`;
 }
 
+function chaosStatus(t) {
+  if (t.opened) return { cls: 'ok', icon: 'unlock', text: `Sobrevivió · ${ordinal(t.finishSeq)}` };
+  if (t.closedBy === 'eliminated') return { cls: 'out', icon: 'x', text: 'Eliminado' };
+  if (t.closedBy === 'time') return { cls: 'off', icon: 'clock', text: 'Sin tiempo' };
+  if (t.closedBy) return { cls: 'off', icon: 'lock', text: 'Cerrado' };
+  return { cls: 'live', icon: null, text: `${t.answered}/${t.total}` };
+}
+
+function ChaosMiniBoard({ pub, myTeamId }) {
+  const order = (t) => (t.opened ? 0 : !t.closedBy ? 1 : t.closedBy === 'eliminated' ? 3 : 2);
+  const rows = [...pub.teams].sort((a, b) => order(a) - order(b) || (a.finishSeq ?? 99) - (b.finishSeq ?? 99) || b.answered - a.answered);
+  return html`<div class="card stack sm">
+    <div class="row between"><h3>Así va el Caos</h3>${pub.chaos ? html`<span class="pill l0">${pub.chaos.alive}/${pub.chaos.total} en pie</span>` : null}</div>
+    <div class="chaos-mini">
+      ${rows.map((t) => {
+        const s = chaosStatus(t);
+        return html`<div class=${`chaos-chip ${s.cls} ${t.id === myTeamId ? 'me' : ''}`}>
+          <span class="grow">${t.name}</span>
+          ${s.icon ? html`<${Icon} name=${s.icon} size=${12} />` : html`<${Hearts} lost=${t.livesLost} total=${t.lives ?? 3} />`}
+          <span class="tiny num">${s.text}</span>
+        </div>`;
+      })}
+    </div>
+  </div>`;
+}
+
 function MiniBoard({ pub, myTeamId }) {
+  if (pub.config.mode === 'chaos') return html`<${ChaosMiniBoard} pub=${pub} myTeamId=${myTeamId} />`;
   return html`<div class="card stack sm">
     <h3>Así van los demás</h3>
     ${pub.teams.map((t) => html`<div class="row nowrap" style="gap:.6rem">
@@ -525,11 +621,62 @@ function MiniBoard({ pub, myTeamId }) {
   </div>`;
 }
 
+/** Pantalla de derrota: se queda encima (con el fondo desenfocado) hasta que el estudiante la cierre. */
+function GameOver({ pub, team, session }) {
+  const eliminated = team.closedBy === 'eliminated';
+  const lost = team.started && team.closed && (eliminated || team.closedBy === 'time');
+  const key = `erlab:gameover:${session.code}:${session.playerId}:${pub.clock?.startedAt ?? ''}`;
+  const [dismissed, setDismissed] = useState(() => sessionStorage.getItem(key) === '1');
+  const btn = useRef(null);
+  const visible = lost && !dismissed && !(pub.phase === 'finished' && pub.podiumRevealed);
+  useEffect(() => {
+    if (visible) btn.current?.focus();
+  }, [visible]);
+  if (!visible) return null;
+  const solo = team.solo;
+  const close = () => {
+    sessionStorage.setItem(key, '1');
+    setDismissed(true);
+  };
+  const lives = team.lives ?? pub.config.chaosLives ?? 3;
+  const taunt = eliminated
+    ? `${lives} errores y el laboratorio te selló por dentro. La hipótesis nula ganó esta vez.`
+    : solo
+      ? 'El reloj llegó a cero antes que tú. El candado sigue sellado… y el tiempo no acepta apelaciones.'
+      : 'El reloj llegó a cero antes que ustedes. El candado sigue sellado… y el tiempo no acepta apelaciones.';
+  return html`<div class="gameover" role="alertdialog" aria-modal="true" aria-labelledby="go-title" aria-describedby="go-text">
+    <div class="gameover-panel">
+      <span class="gameover-lock"><${Padlock} color="#d62f4f" size=${110} /></span>
+      <span class="gameover-kicker">Game over</span>
+      <h2 id="go-title" class="gameover-title">${solo ? 'No pudiste abrir el candado' : 'No pudieron abrir el candado'}</h2>
+      <p id="go-text" class="gameover-text">${taunt}</p>
+      ${eliminated ? html`<${Hearts} lost=${team.livesLost} total=${lives} />` : null}
+      <p class="gameover-stats">
+        ${eliminated ? `Caíste en la pregunta ${team.history.length} de ${team.total}` : `${team.history.length} de ${team.total} preguntas respondidas`}
+        ${team.finishedAtMs !== null && team.finishedAtMs !== undefined ? html` · <span class="num">${eliminated ? 'resististe' : 'tiempo'} ${mmss(team.finishedAtMs)}</span>` : null}
+      </p>
+      <p class="gameover-hint">${eliminated
+        ? 'Tu nota aún cuenta: los aciertos pesan 70 % y resistir más tiempo te ubica mejor entre los eliminados.'
+        : 'Los aciertos siguen contando para la nota: miren el proyector para el podio.'}</p>
+      <button ref=${btn} class="btn block lg" onClick=${close}>${solo ? 'Ver cómo termina el Caos' : 'Ver cómo terminan los demás'}</button>
+    </div>
+  </div>`;
+}
+
 function LockClosed({ pub, team, session, muted, toggleSound }) {
   const opened = team.closedBy === null && team.finishSeq !== null;
   const [fire] = useState(() => (opened ? Date.now() : 0));
   const lock = pub.locks.find((l) => l.id === team.lock);
-  const title = opened ? '¡Candado abierto!' : team.closedBy === 'time' ? 'Se acabó el tiempo' : 'Partida terminada';
+  const solo = team.solo;
+  const eliminated = team.closedBy === 'eliminated';
+  const title = opened
+    ? solo ? '¡Sobreviviste al Caos!' : '¡Candado abierto!'
+    : eliminated ? 'Eliminado' : team.closedBy === 'time' ? 'Se acabó el tiempo' : 'Partida terminada';
+  let detail;
+  if (opened && solo) detail = html`<p style="margin:0">Terminaste en el puesto <b class="gold" style="font-size:1.3rem">${ordinal(team.finishSeq)}</b> · ${mmss(team.finishedAtMs)}</p>`;
+  else if (opened) detail = html`<p style="margin:0">«${team.name}» abrió su candado en el puesto <b class="gold" style="font-size:1.3rem">${ordinal(team.finishSeq)}</b> · ${mmss(team.finishedAtMs)}</p>`;
+  else if (eliminated) detail = html`<p class="muted" style="margin:0">Caíste en la pregunta ${team.history.length} de ${team.total}, tras resistir ${mmss(team.finishedAtMs)}. Resistir más tiempo te ubica mejor entre los eliminados.</p>`;
+  else detail = html`<p class="muted" style="margin:0">${solo ? 'Tu partida' : 'El candado'} se cerró con ${team.history.length} de ${team.total} preguntas respondidas.</p>`;
   return html`<div class="wrap stack">
     ${opened ? html`<${Confetti} fire=${fire} />` : null}
     <div class="row between">
@@ -537,19 +684,18 @@ function LockClosed({ pub, team, session, muted, toggleSound }) {
       <${SoundToggle} muted=${muted} onToggle=${toggleSound} />
     </div>
     <div class="card center stack" style="justify-items:center">
-      <${Padlock} open=${opened} color=${opened ? '#ffc53d' : '#8890c4'} size=${120} />
+      <${Padlock} open=${opened} color=${opened ? '#ffc53d' : eliminated ? '#d62f4f' : '#8890c4'} size=${120} />
       <h1 class="display" style="font-size:1.8rem">${title}</h1>
-      ${opened
-        ? html`<p style="margin:0">«${team.name}» abrió su candado en el puesto <b class="gold" style="font-size:1.3rem">${ordinal(team.finishSeq)}</b> · ${mmss(team.finishedAtMs)}</p>`
-        : html`<p class="muted" style="margin:0">El candado se cerró con ${team.history.length} de ${team.total} preguntas respondidas.</p>`}
+      ${detail}
+      ${solo ? html`<${Hearts} lost=${team.livesLost} total=${team.lives} />` : null}
       ${team.correct !== null ? html`<div class="row" style="justify-content:center"><span class="pill ok">${team.correct}/${team.total} correctas</span><${XpBar} xp=${team.xp} /></div>` : null}
       ${pub.phase === 'finished'
-        ? html`<p class="small gold" style="margin:0"><b>Todos los candados están cerrados. Miren el proyector: ¡se viene el podio!</b></p>`
-        : html`<p class="small muted" style="margin:0">Esperando a que los demás equipos terminen<span class="waiting-dots"></span></p>`}
+        ? html`<p class="small gold" style="margin:0"><b>${solo ? 'El Caos terminó.' : 'Todos los candados están cerrados.'} Miren el proyector: ¡se viene el podio!</b></p>`
+        : html`<p class="small muted" style="margin:0">Esperando a que ${solo ? 'los demás terminen o caigan' : 'los demás equipos terminen'}<span class="waiting-dots"></span></p>`}
     </div>
     ${team.review
-      ? html`<div class="stack sm"><h3>Revisión de su candado</h3><${ReviewList} items=${team.review} /></div>`
-      : html`<div class="card small muted row nowrap" style="align-items:flex-start"><span class="gold"><${Icon} name="lock" size=${18} /></span><span>Las soluciones se desbloquean cuando todos los equipos del candado ${team.lock} terminen, para no dar pistas.</span></div>`}
+      ? html`<div class="stack sm"><h3>${solo ? 'Revisión de tus respuestas' : 'Revisión de su candado'}</h3><${ReviewList} items=${team.review} solo=${solo} /></div>`
+      : html`<div class="card small muted row nowrap" style="align-items:flex-start"><span class="gold"><${Icon} name="lock" size=${18} /></span><span>${solo ? 'Las soluciones se desbloquean cuando todos terminen o queden eliminados, para no dar pistas.' : `Las soluciones se desbloquean cuando todos los equipos del candado ${team.lock} terminen, para no dar pistas.`}</span></div>`}
     <${MiniBoard} pub=${pub} myTeamId=${team.teamId} />
     <${Footer} />
   </div>`;
@@ -558,12 +704,18 @@ function LockClosed({ pub, team, session, muted, toggleSound }) {
 // ---------------------------------------------------------------------------
 // Resultados (tras revelar el podio)
 // ---------------------------------------------------------------------------
+export function speedLabel(row) {
+  const pos = row.breakdown.speedPosition;
+  if (row.solo) return pos ? `terminó ${ordinal(pos)}` : row.closedBy === 'eliminated' ? 'eliminado' : row.closedBy === 'time' ? 'tiempo agotado' : 'no terminó';
+  return pos ? `abrió ${ordinal(pos)}` : row.closedBy === 'time' ? 'tiempo agotado' : 'no abrió';
+}
+
 export function BreakdownCard({ row, dark = true }) {
   const b = row.breakdown;
   return html`<div class="breakdown">
     <div class="line"><span>Acierto: ${row.correct}/${row.total} → ${dec(b.accuracyPoints, 0)}/100 = <b>${dec(b.accuracy5)}</b> sobre 5
       <div class="formula">× peso ${Math.round(b.weights.accuracy * 100)} %</div></span><b class="num">${dec(b.accuracyPart)}</b></div>
-    <div class="line"><span>Velocidad: ${b.speedPosition ? `abrió ${ordinal(b.speedPosition)}` : row.closedBy === 'time' ? 'tiempo agotado' : 'no abrió'} → base <b>${dec(b.speed, 1)}</b>
+    <div class="line"><span>Velocidad: ${speedLabel(row)} → base <b>${dec(b.speed, 1)}</b>
       <div class="formula">× peso ${Math.round(b.weights.speed * 100)} %</div></span><b class="num">${dec(b.speedPart)}</b></div>
     <div class="line total"><span>Puntaje ${dec(row.score)} → Nota</span><span class="num">${grade(row.grade)}</span></div>
     ${row.tiebreak ? html`<p class=${`small ${dark ? 'muted' : ''}`} style="margin:0">${row.tiebreak}</p>` : null}
@@ -575,18 +727,22 @@ function Results({ pub, team, session }) {
   const mine = rows.find((r) => r.teamId === team.teamId);
   const [fire] = useState(() => (mine && mine.position <= 3 ? Date.now() : 0));
   const title = mine ? rankTitle(mine.grade) : '';
+  const solo = !!mine?.solo;
   const certUrl = mine
-    ? `/certificado?${new URLSearchParams({ nombre: session.name, equipo: mine.name, puesto: String(mine.position), rango: title, candado: String(mine.lock), insignias: mine.badges.map((b) => b.label).join('|') })}`
+    ? `/certificado?${new URLSearchParams({ nombre: session.name, equipo: solo ? '' : mine.name, puesto: String(mine.position), rango: title, candado: String(mine.lock), total: String(rows.length), insignias: mine.badges.map((b) => b.label).join('|') })}`
     : null;
+  const statusOf = (r) => (r.solo
+    ? r.opened ? `terminó ${ordinal(r.finishSeq)}` : r.closedBy === 'eliminated' ? 'eliminado' : 'sin terminar'
+    : r.opened ? `abrió ${ordinal(r.finishSeq)}` : 'sin abrir');
   return html`<div class="wrap stack">
     <${Confetti} fire=${fire} />
-    <span class="pill">Tablero final</span>
+    <span class=${`pill ${solo ? 'l0' : ''}`}>${solo ? 'Resultado del Caos' : 'Tablero final'}</span>
     ${mine
       ? html`<div class="card stack" style="border:2px solid var(--gold)">
           <div class="row nowrap">
             <span class="rank-pos" style="font-size:3rem">${ordinal(mine.position)}</span>
             <div class="grow">
-              <div class="label">Tu equipo</div>
+              <div class="label">${solo ? `Tu puesto entre ${rows.length}` : 'Tu equipo'}</div>
               <h2>${mine.name}</h2>
               <p class="small muted" style="margin:0">Rango: <b class="gold">${title}</b></p>
             </div>
@@ -602,12 +758,12 @@ function Results({ pub, team, session }) {
       <div class="rank-list">
         ${rows.map((r) => html`<div class=${`rank-item c-${LOCKS[r.lock].key} ${r.teamId === team.teamId ? 'me' : ''}`}>
           <span class="rank-pos">${r.position}</span>
-          <div class="grow"><b>${r.name}</b><div class="tiny muted">${r.correct}/${r.total} correctas · ${r.opened ? `abrió ${ordinal(r.finishSeq)}` : 'sin abrir'}</div></div>
+          <div class="grow"><b>${r.name}</b><div class="tiny muted">${r.correct}/${r.total} correctas · ${statusOf(r)}</div></div>
           <span class="grade-chip">${grade(r.grade)}</span>
         </div>`)}
       </div>
     </div>
-    ${team.review ? html`<details class="card"><summary style="cursor:pointer"><b>Revisar las respuestas de mi candado</b></summary><div style="margin-top:.8rem"><${ReviewList} items=${team.review} /></div></details>` : null}
+    ${team.review ? html`<details class="card"><summary style="cursor:pointer"><b>${solo ? 'Revisar mis respuestas' : 'Revisar las respuestas de mi candado'}</b></summary><div style="margin-top:.8rem"><${ReviewList} items=${team.review} solo=${solo} /></div></details>` : null}
     <${Footer} />
   </div>`;
 }

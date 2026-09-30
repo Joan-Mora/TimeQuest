@@ -1,4 +1,5 @@
 export const LOCKS = {
+  0: { key: 'l0', short: 'Caos', icon: 'bolt' },
   1: { key: 'l1', short: 'Estimación', icon: 'target' },
   2: { key: 'l2', short: 'Hipótesis', icon: 'scales' },
   3: { key: 'l3', short: 'Regresión', icon: 'trend' },

@@ -56,12 +56,13 @@ export function LevelIcon({ lock, size = 56, number = true, boss = false }) {
   const cls = boss ? 'c-boss' : `c-${meta.key}`;
   return html`<span class=${`lvl-icon ${cls}`} style=${`--size:${size}px`} aria-hidden="true">
     ${boss ? ICONS.crown : ICONS[meta.icon]}
-    ${number && !boss ? html`<span class="lvl-num">${lock}</span>` : null}
+    ${number && !boss && lock ? html`<span class="lvl-num">${lock}</span>` : null}
   </span>`;
 }
 
 export function LockPill({ lock, name, prefix = 'Candado' }) {
-  return html`<span class=${`pill ${LOCKS[lock].key}`}>${prefix} ${lock} · ${name ?? LOCKS[lock].short}</span>`;
+  const label = lock === 0 ? `Modo ${LOCKS[0].short}` : `${prefix} ${lock} · ${name ?? LOCKS[lock].short}`;
+  return html`<span class=${`pill lock-pill ${LOCKS[lock].key}`}>${label}</span>`;
 }
 
 export function Hearts({ lost = 0, total = 3 }) {
@@ -97,9 +98,29 @@ export function MemberChip({ member, me = false, captain = false }) {
   </span>`;
 }
 
-/** Texto con los valores «x = 12» resaltados. */
+// Lato no trae los diacríticos combinantes (x̄, p̂): el navegador los toma de otra fuente y quedan corridos.
+// Se dibujan con CSS sobre la letra base; el carácter original queda oculto para copiar/lectores de pantalla.
+const MARK_RE = /(\S)([\u0302\u0304\u0305])/gu;
+const TALL = /[A-Zbdfhklt0-9ÁÉÍÓÚÑβδθλ]/u;
+
+export function MathText({ text }) {
+  const s = String(text ?? '');
+  if (!/[\u0302\u0304\u0305]/u.test(s)) return s;
+  const out = [];
+  let last = 0;
+  for (const m of s.matchAll(MARK_RE)) {
+    if (m.index > last) out.push(s.slice(last, m.index));
+    const kind = m[2] === '\u0302' ? 'mk-hat' : 'mk-bar';
+    out.push(html`<span class=${`${kind} ${TALL.test(m[1]) ? 'tall' : ''}`}>${m[1]}<span class="mk-src">${m[2]}</span></span>`);
+    last = m.index + m[0].length;
+  }
+  if (last < s.length) out.push(s.slice(last));
+  return out;
+}
+
+/** Texto con los valores «x = 12» resaltados y la notación x̄ / p̂ bien dibujada. */
 export function Rich({ text }) {
-  return highlightTokens(text || '').map((p) => (p.hl ? html`<span class="hl">${p.t}</span>` : p.t));
+  return highlightTokens(text || '').map((p) => (p.hl ? html`<span class="hl"><${MathText} text=${p.t} /></span>` : html`<${MathText} text=${p.t} />`));
 }
 
 export function Difficulty({ level }) {
@@ -129,8 +150,9 @@ const BADGE_STYLE = {
   streak: { icon: 'fire', color: '#d62f4f' },
   sync: { icon: 'sync', color: '#6d45e8' },
   clutch: { icon: 'bolt', color: '#f5a524', ink: '#1b1f3b' },
+  survivor: { icon: 'heart', color: '#d62f4f' },
 };
-const LOCK_COLORS = { 1: '#0a7f75', 2: '#6d45e8', 3: '#f5a524', 4: '#d62f4f' };
+const LOCK_COLORS = { 0: '#b8327a', 1: '#0a7f75', 2: '#6d45e8', 3: '#f5a524', 4: '#d62f4f' };
 
 export function HexBadge({ badge, lock, size = 64 }) {
   const style = BADGE_STYLE[badge.id] ?? BADGE_STYLE.first;
@@ -207,12 +229,13 @@ export function Confetti({ fire }) {
   return html`<canvas ref=${ref} class="confetti-canvas" aria-hidden="true"></canvas>`;
 }
 
-/** Pila de avisos breves. Uso: const [toasts, push] = useToasts(); */
+/** Pila de avisos breves. Uso: const [toasts, push] = useToasts(); `group` reemplaza el aviso anterior del mismo grupo. */
 export function useToasts() {
   const [toasts, setToasts] = useState([]);
-  const push = (text, { kind = 'info', ms = 3200, icon } = {}) => {
+  const push = (text, { kind = 'info', ms = 3200, icon, group } = {}) => {
     const id = Math.random().toString(36).slice(2);
-    setToasts((t) => [...t.slice(-3), { id, text, kind, icon: icon ?? (kind === 'error' ? 'x' : null) }]);
+    const item = { id, text, kind, group, icon: icon ?? (kind === 'error' ? 'x' : null) };
+    setToasts((t) => [...t.filter((x) => !group || x.group !== group).slice(-3), item]);
     setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), ms);
   };
   return [toasts, push];

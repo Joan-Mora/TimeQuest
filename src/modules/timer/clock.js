@@ -3,15 +3,18 @@
  * (epoch ms) para que sobreviva a un reinicio y los clientes solo tengan que
  * calcular el tiempo restante con su desfase respecto al servidor.
  */
+/** Bonos por candado; la clave 0 es el reloj único del modo Caos. */
+const emptyBonus = () => ({ 0: 0, 1: 0, 2: 0, 3: 0, 4: 0 });
+
 export function createClock() {
-  return { startedAt: null, pausedAt: null, pausedTotalMs: 0, bonusMs: { 1: 0, 2: 0, 3: 0, 4: 0 } };
+  return { startedAt: null, pausedAt: null, pausedTotalMs: 0, bonusMs: emptyBonus() };
 }
 
 export function startClock(clock, now) {
   clock.startedAt = now;
   clock.pausedAt = null;
   clock.pausedTotalMs = 0;
-  clock.bonusMs = { 1: 0, 2: 0, 3: 0, 4: 0 };
+  clock.bonusMs = emptyBonus();
 }
 
 export function pauseClock(clock, now) {

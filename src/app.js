@@ -8,6 +8,7 @@ import { log } from './lib/logger.js';
 import { joinRoom } from './modules/rooms/playerService.js';
 import { buildResults } from './modules/game/gameEngine.js';
 import { studentsCsv, teamsCsv } from './modules/exports/exportService.js';
+import { buildXlsx } from './modules/exports/xlsxReport.js';
 
 const SPA_ROUTES = ['/', '/moderador', '/proyector', '/informe', '/certificado', '/espectador'];
 
@@ -61,7 +62,7 @@ export function createApp({ manager, bankService, store, config }) {
     if (joinLimited(req.ip)) return res.status(429).json({ ok: false, error: 'Demasiados intentos. Espera un momento.' });
     try {
       const { player, token } = manager.mutate(req.params.code, (room) =>
-        joinRoom(room, req.body?.name, { maxPlayers: config.maxPlayersPerRoom }),
+        joinRoom(room, req.body?.name, { maxPlayers: config.maxPlayersPerRoom, deviceId: req.body?.device }),
       );
       res.json({ ok: true, code: manager.get(req.params.code).code, playerId: player.id, name: player.name, token });
     } catch (err) {
@@ -107,22 +108,30 @@ export function createApp({ manager, bankService, store, config }) {
     return room.results ?? (room.game ? buildResults(room) : null);
   }
 
-  app.get('/api/rooms/:code/export/:kind', requireModerator, (req, res) => {
+  app.get('/api/rooms/:code/export/:kind', requireModerator, async (req, res) => {
     const room = manager.get(req.params.code);
     if (!room) return res.status(404).json({ ok: false, error: 'Sala no encontrada.' });
     const results = resultsFor(room);
     if (!results) return res.status(409).json({ ok: false, error: 'La partida aún no ha empezado.' });
     const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+    const partial = room.phase !== 'finished';
+    const who = results.mode === 'chaos' ? 'jugadores' : 'equipos';
     if (req.params.kind === 'equipos.csv') {
-      res.attachment(`resultados-equipos-${room.code}-${stamp}.csv`).type('text/csv; charset=utf-8').send(teamsCsv(results));
+      res.attachment(`resultados-${who}-${room.code}-${stamp}.csv`).type('text/csv; charset=utf-8').send(teamsCsv(results));
     } else if (req.params.kind === 'estudiantes.csv') {
       res.attachment(`resultados-estudiantes-${room.code}-${stamp}.csv`).type('text/csv; charset=utf-8').send(studentsCsv(results));
+    } else if (req.params.kind === 'informe.xlsx') {
+      const buffer = await buildXlsx({ room, results, partial });
+      res.attachment(`informe-${room.code}-${stamp}.xlsx`)
+        .type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        .send(Buffer.from(buffer));
     } else if (req.params.kind === 'informe.json') {
       res.json({
         ok: true,
         room: { code: room.code, title: room.config.title, phase: room.phase, createdAt: room.createdAt, config: room.config },
         locks: room.game?.locks ?? bankService.get().locks,
-        partial: room.phase !== 'finished',
+        partial,
+        players: Object.keys(room.players).length,
         results,
       });
     } else {

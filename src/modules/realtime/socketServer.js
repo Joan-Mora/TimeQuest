@@ -3,7 +3,7 @@ import { safeEqual } from '../../lib/ids.js';
 import { DomainError } from '../../lib/errors.js';
 import { log } from '../../lib/logger.js';
 import { createRateLimiter } from '../../lib/rateLimit.js';
-import { applyConfigPatch, addLog, orderedTeams } from '../rooms/roomModel.js';
+import { applyConfigPatch, addLog, isChaos, orderedTeams } from '../rooms/roomModel.js';
 import { findPlayerByToken, removePlayer } from '../rooms/playerService.js';
 import * as teams from '../teams/teamService.js';
 import * as engine from '../game/gameEngine.js';
@@ -170,20 +170,28 @@ export function createRealtime(httpServer, { manager, bankService, config }) {
       const result = manager.mutate(code, (r) => engine.submit(r, playerId, Number(q), manager.onlineChecker(code)));
       const r = manager.get(code);
       const team = r.teams[result.teamId];
+      // En Caos las vidas delatan cada error, así que el veredicto siempre se muestra.
+      const hide = r.config.feedbackMode === 'end' && !isChaos(r);
       emitEvent(code, `team:${code}:${team.id}`, {
         type: 'answer',
         index: result.index,
-        correct: r.config.feedbackMode === 'end' ? null : result.correct,
+        correct: hide ? null : result.correct,
         byName: r.players[playerId]?.name,
+        livesLeft: result.livesLeft,
+        eliminated: result.eliminated,
       });
       if (result.opened) {
-        emitEvent(code, 'pub', { type: 'opened', teamId: team.id, name: team.name, lock: team.lock, seq: result.finishSeq });
+        emitEvent(code, 'pub', { type: 'opened', teamId: team.id, name: team.name, lock: team.lock, seq: result.finishSeq, solo: !!team.solo });
+      }
+      if (result.eliminated) {
+        const { alive, total } = engine.chaosAlive(r);
+        emitEvent(code, 'pub', { type: 'eliminated', teamId: team.id, name: team.name, alive, total });
       }
       if (engine.allClosed(r) && r.phase === 'running') {
         manager.mutate(code, (rr) => engine.endGame(rr, Date.now(), 'completed'));
         emitEvent(code, 'pub', { type: 'ended' });
       }
-      return { correct: r.config.feedbackMode === 'end' ? null : result.correct, opened: result.opened };
+      return { correct: hide ? null : result.correct, opened: result.opened, eliminated: result.eliminated };
     }, { limiter });
 
     handle(socket, 'player:claimCaptain', ({ q }) => {
@@ -270,14 +278,20 @@ export function createRealtime(httpServer, { manager, bankService, config }) {
       io.to(`player:${room.code}:${playerId}`).emit('session:ended', { reason: 'kicked' });
       for (const s of socketsOf(room.code, playerId)) s.disconnect(true);
       addLog(room, `${p.name} fue retirado de la sala.`);
+      if (room.phase === 'running' && engine.allClosed(room)) {
+        engine.endGame(room, Date.now(), 'completed');
+        emitEvent(room.code, 'pub', { type: 'ended' });
+      }
     });
     act('mod:start', (room) => {
-      if (room.teamOrder.length === 0) teams.autoAssign(room, {});
-      for (const p of Object.values(room.players)) {
-        if (!p.teamId) teams.placeLatePlayer(room, p.id, { force: true });
+      if (!isChaos(room)) {
+        if (room.teamOrder.length === 0) teams.autoAssign(room, {});
+        for (const p of Object.values(room.players)) {
+          if (!p.teamId) teams.placeLatePlayer(room, p.id, { force: true });
+        }
       }
       engine.startGame(room, bankService.get());
-      emitEvent(room.code, 'pub', { type: 'started' });
+      emitEvent(room.code, 'pub', { type: 'started', mode: room.config.mode });
     });
     act('mod:pause', (room) => {
       engine.pauseGame(room);

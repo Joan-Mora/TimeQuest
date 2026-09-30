@@ -130,6 +130,7 @@ export function pickQuestions(bank, lock, count) {
 export function publicQuestion(question, optionOrder) {
   const base = {
     id: question.id,
+    lock: question.lock,
     type: question.type,
     prompt: question.prompt,
     data: question.data,

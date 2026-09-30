@@ -4,13 +4,13 @@
  * y el orden de apertura de los candados lo decide el servidor, nunca el cliente.
  */
 import { DomainError } from '../../lib/errors.js';
-import { seededRandom, shuffle } from '../../lib/ids.js';
+import { seededRandom, shortId, shuffle } from '../../lib/ids.js';
 import { checkAnswer, parseNumber } from '../questions/answerChecker.js';
 import { pickQuestions } from '../questions/questionBank.js';
 import { createClock, elapsedMs, lockLimitMs, pauseClock, resumeClock, startClock, addBonus } from '../timer/clock.js';
 import { accuracyPoints, compareRows, computeResults, liveXp, resolveScoring, round, speedForPosition } from '../scoring/scoring.js';
 import { computeBadges } from '../scoring/badges.js';
-import { addLog, orderedTeams, teamMembers } from '../rooms/roomModel.js';
+import { CHAOS_LOCK, addLog, isChaos, orderedTeams, teamMembers } from '../rooms/roomModel.js';
 
 export const isClosed = (progress) => !!progress && progress.finishedAtMs !== null;
 
@@ -40,11 +40,39 @@ export function initTeamProgress(room, team) {
     finishSeq: null,
     closedBy: order.length === 0 ? 'time' : null,
     remainingMsAtOpen: null,
+    lives: isChaos(room) ? room.config.chaosLives ?? 3 : null,
+    livesLost: 0,
+    eliminatedSeq: null,
   };
+}
+
+/** En Caos cada jugador compite en su propio «equipo» de una persona sobre el candado 0 (todos los temas). */
+export function createSoloTeam(room, player) {
+  const team = { id: shortId('t_'), name: player.name, lock: CHAOS_LOCK, solo: true, progress: null };
+  room.teams[team.id] = team;
+  room.teamOrder.push(team.id);
+  player.teamId = team.id;
+  return team;
+}
+
+/** Intercala las preguntas de cada tema (1, 2, 3, 4, 1, 2, …) para que el Caos mezcle todo aun sin barajar. */
+function interleave(lists) {
+  const out = [];
+  const max = Math.max(0, ...lists.map((l) => l.length));
+  for (let i = 0; i < max; i++) for (const l of lists) if (i < l.length) out.push(l[i]);
+  return out;
 }
 
 export function startGame(room, bank, now = Date.now()) {
   if (room.phase !== 'lobby') throw new DomainError('La partida ya fue iniciada.');
+  const chaos = isChaos(room);
+  if (chaos) {
+    room.teams = {};
+    room.teamOrder = [];
+    const players = Object.values(room.players).sort((a, b) => a.joinedAt - b.joinedAt);
+    if (players.length === 0) throw new DomainError('Todavía no hay jugadores conectados.');
+    players.forEach((p) => createSoloTeam(room, p));
+  }
   for (const id of [...room.teamOrder]) {
     if (teamMembers(room, id).length === 0) {
       delete room.teams[id];
@@ -60,8 +88,14 @@ export function startGame(room, bank, now = Date.now()) {
     game.byLock[lock] = picks.map((q) => q.id);
     for (const q of picks) game.questions[q.id] = structuredClone(q);
   }
-  const missing = [...new Set(teams.map((t) => t.lock))].filter((l) => game.byLock[l].length === 0);
-  if (missing.length) throw new DomainError(`El candado ${missing.join(', ')} no tiene preguntas activas.`);
+  if (chaos) {
+    game.byLock[CHAOS_LOCK] = interleave([1, 2, 3, 4].map((l) => game.byLock[l]));
+    if (game.byLock[CHAOS_LOCK].length === 0) throw new DomainError('El banco no tiene preguntas activas.');
+    room.config.timeLimitsSec[CHAOS_LOCK] ??= 900;
+  } else {
+    const missing = [...new Set(teams.map((t) => t.lock))].filter((l) => game.byLock[l].length === 0);
+    if (missing.length) throw new DomainError(`El candado ${missing.join(', ')} no tiene preguntas activas.`);
+  }
 
   room.game = game;
   for (const p of Object.values(room.players)) p.stats = newPlayerStats();
@@ -69,10 +103,11 @@ export function startGame(room, bank, now = Date.now()) {
   startClock(room.clock, now);
   room.phase = 'running';
   room.finishCounter = 0;
+  room.eliminatedCounter = 0;
   room.results = null;
   room.podiumRevealed = false;
   room.autoPaused = false;
-  addLog(room, `Partida iniciada con ${teams.length} equipos.`, now);
+  addLog(room, chaos ? `Modo Caos iniciado: ${teams.length} jugadores, todos contra todos.` : `Partida iniciada con ${teams.length} equipos.`, now);
 }
 
 function assertRunning(room) {
@@ -170,14 +205,37 @@ export function submit(room, playerId, questionIndex, isOnline = () => true, now
   progress.captainOverride = null;
 
   let opened = false;
-  if (progress.current >= progress.order.length) {
+  let eliminated = false;
+  if (team.solo && !correct) progress.livesLost = (progress.livesLost ?? 0) + 1;
+  if (team.solo && progress.lives && progress.livesLost >= progress.lives) {
+    // Perder la última vida elimina aunque fuera la última pregunta: en el Caos no hay segunda oportunidad.
+    eliminated = true;
+    progress.closedBy = 'eliminated';
+    progress.finishedAtMs = at;
+    progress.eliminatedSeq = room.eliminatedCounter = (room.eliminatedCounter ?? 0) + 1;
+    addLog(room, `«${team.name}» quedó eliminado del Caos.`, now);
+  } else if (progress.current >= progress.order.length) {
     opened = true;
     progress.finishedAtMs = at;
     progress.finishSeq = ++room.finishCounter;
     progress.remainingMsAtOpen = lockLimitMs(room.clock, room.config.timeLimitsSec, team.lock) - at;
-    addLog(room, `«${team.name}» abrió el candado ${team.lock} (#${progress.finishSeq}).`, now);
+    addLog(room, team.solo ? `«${team.name}» sobrevivió al Caos (#${progress.finishSeq}).` : `«${team.name}» abrió el candado ${team.lock} (#${progress.finishSeq}).`, now);
   }
-  return { correct, opened, finishSeq: progress.finishSeq, teamId: team.id, index: progress.current - 1 };
+  return {
+    correct,
+    opened,
+    eliminated,
+    livesLeft: team.solo ? Math.max(0, progress.lives - progress.livesLost) : null,
+    finishSeq: progress.finishSeq,
+    teamId: team.id,
+    index: progress.current - 1,
+  };
+}
+
+/** Jugadores del Caos que siguen en pie (sin eliminar), para el contador «En pie X/Y». */
+export function chaosAlive(room) {
+  const solos = orderedTeams(room).filter((t) => t.solo && t.progress);
+  return { alive: solos.filter((t) => t.progress.closedBy !== 'eliminated').length, total: solos.length };
 }
 
 /** Un integrante toma el mando cuando el capitán lleva CLAIM_AFTER_MS sin confirmar (distraído o sin celular). */
@@ -243,10 +301,12 @@ export function addTime(room, lock, seconds) {
   if (!['running', 'paused'].includes(room.phase)) throw new DomainError('No hay partida en curso.');
   const secs = Math.round(Number(seconds));
   if (!Number.isFinite(secs) || secs === 0 || Math.abs(secs) > 1800) throw new DomainError('Tiempo inválido.');
-  const locks = lock === 'all' ? [1, 2, 3, 4] : [Number(lock)];
-  if (!locks.every((l) => [1, 2, 3, 4].includes(l))) throw new DomainError('Candado inválido.');
+  const valid = isChaos(room) ? [CHAOS_LOCK] : [1, 2, 3, 4];
+  const locks = lock === 'all' ? valid : [Number(lock)];
+  if (!locks.every((l) => valid.includes(l))) throw new DomainError('Candado inválido.');
   locks.forEach((l) => addBonus(room.clock, l, secs * 1000));
-  addLog(room, `${secs > 0 ? '+' : ''}${secs} s para ${lock === 'all' ? 'todos los candados' : `el candado ${lock}`}.`);
+  const target = isChaos(room) ? 'todos' : lock === 'all' ? 'todos los candados' : `el candado ${lock}`;
+  addLog(room, `${secs > 0 ? '+' : ''}${secs} s para ${target}.`);
 }
 
 export function endGame(room, now = Date.now(), reason = 'moderator') {
@@ -275,12 +335,27 @@ export function resetGame(room) {
   room.autoPaused = false;
   room.clock = createClock();
   room.finishCounter = 0;
+  room.eliminatedCounter = 0;
+  if (isChaos(room)) {
+    room.teams = {};
+    room.teamOrder = [];
+    for (const p of Object.values(room.players)) p.teamId = null;
+  }
   for (const t of Object.values(room.teams)) t.progress = null;
   for (const p of Object.values(room.players)) p.stats = newPlayerStats();
   addLog(room, 'Partida reiniciada: de vuelta al lobby.');
 }
 
+export const CHAOS_META = Object.freeze({
+  id: CHAOS_LOCK,
+  name: 'Caos',
+  title: 'Todos contra todos',
+  story: 'Los cuatro candados se rompieron a la vez: estimación, hipótesis, regresión y ANOVA mezclados. Cada error cuesta una vida; sobrevive quien llegue al final.',
+  badge: 'Superviviente del Caos',
+});
+
 export function lockMeta(room, lock) {
+  if (lock === CHAOS_LOCK) return CHAOS_META;
   return room.game?.locks.find((l) => l.id === lock) ?? { id: lock, name: `Candado ${lock}`, badge: 'Insignia' };
 }
 
@@ -314,12 +389,16 @@ export function liveRanking(room, now = Date.now()) {
       teamId: t.id,
       name: t.name,
       lock: t.lock,
+      solo: !!t.solo,
+      lives: p.lives,
+      livesLost: p.livesLost ?? 0,
       correct,
       total,
       answered: p.answers.length,
       opened: !!pos,
       finishSeq: pos,
       elapsedMs: isClosed(p) ? p.finishedAtMs : null,
+      survivedMs: survivedMs(t, room, now),
       status,
       speed,
       speedProjected: status === 'playing',
@@ -333,6 +412,13 @@ export function liveRanking(room, now = Date.now()) {
     r.position = i + 1;
   });
   return { computedAt: now, weights: { accuracy: round(wA, 4), speed: round(wV, 4) }, nextSpeed, teams: rows };
+}
+
+/** En Caos, cuánto resistió en pie quien no terminó (desempate); null para quien terminó o en modo equipos. */
+function survivedMs(team, room, now) {
+  const p = team.progress;
+  if (!team.solo || (p.closedBy === null && p.finishSeq !== null)) return null;
+  return isClosed(p) ? p.finishedAtMs : elapsedMs(room.clock, now);
 }
 
 export function buildResults(room, now = Date.now()) {
@@ -350,6 +436,7 @@ export function buildResults(room, now = Date.now()) {
         opened: p.closedBy === null && p.finishSeq !== null,
         finishSeq: p.finishSeq,
         elapsedMs: p.finishedAtMs,
+        survivedMs: survivedMs(t, room, now),
       };
     }),
     room.config.scoring,
@@ -359,6 +446,10 @@ export function buildResults(room, now = Date.now()) {
     const team = room.teams[row.teamId];
     const p = team.progress;
     row.closedBy = p.closedBy;
+    row.solo = !!team.solo;
+    row.lives = p.lives;
+    row.livesLost = p.livesLost ?? 0;
+    row.eliminatedSeq = p.eliminatedSeq ?? null;
     row.members = teamMembers(room, team.id).map((m) => ({ id: m.id, name: m.name }));
     row.badges = computeBadges({
       lockBadge: lockMeta(room, team.lock).badge,
@@ -366,6 +457,9 @@ export function buildResults(room, now = Date.now()) {
       total: p.order.length,
       openedPosition: row.breakdown.speedPosition,
       remainingMsAtOpen: p.remainingMsAtOpen,
+      chaos: !!team.solo,
+      lives: p.lives ?? 0,
+      livesLost: p.livesLost ?? 0,
     });
     row.xp = liveXp(row.correct, row.breakdown.speedPosition);
   }
@@ -386,6 +480,11 @@ export function buildResults(room, now = Date.now()) {
         position: row?.position ?? null,
         grade: row?.grade ?? null,
         score: row?.score ?? null,
+        correct: row?.correct ?? null,
+        total,
+        opened: row?.opened ?? false,
+        closedBy: row?.closedBy ?? null,
+        livesLost: row?.solo ? row.livesLost : null,
         votes: stats.votes,
         confirms: stats.confirms,
         questionsVoted: stats.votedQuestions.length,
@@ -397,7 +496,7 @@ export function buildResults(room, now = Date.now()) {
   for (const [qid, q] of Object.entries(room.game?.questions ?? {})) {
     const attempts = [];
     for (const t of teams) for (const a of t.progress.answers) if (a.qid === qid) attempts.push(a);
-    if (!teams.some((t) => t.lock === q.lock)) continue;
+    if (!teams.some((t) => t.progress.order.includes(qid))) continue;
     const correct = attempts.filter((a) => a.correct).length;
     questionStats.push({
       qid,
@@ -411,7 +510,14 @@ export function buildResults(room, now = Date.now()) {
   }
   questionStats.sort((a, b) => (a.accuracy ?? 101) - (b.accuracy ?? 101) || b.attempts - a.attempts);
 
-  return { computedAt: now, scoring: resolveScoring(room.config.scoring), teams: rows, students, questionStats };
+  return {
+    computedAt: now,
+    mode: isChaos(room) ? 'chaos' : 'teams',
+    scoring: resolveScoring(room.config.scoring),
+    teams: rows,
+    students,
+    questionStats,
+  };
 }
 
 /** Tras un reinicio del servidor, una partida en curso vuelve en pausa para no "comerse" el tiempo caído. */

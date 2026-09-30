@@ -2,7 +2,7 @@ import { html, useEffect, useRef, useState } from '../lib/html.js';
 import { useConnection, useKeepAlive } from '../lib/connection.js';
 import { remainingFor, useTick } from '../lib/clock.js';
 import { LOCKS, dec, grade, mmss, ordinal, phaseLabel } from '../lib/format.js';
-import { ConnectionBanner, Countdown, Footer, Icon, LevelIcon, Toasts, useToasts } from '../components/ui.js';
+import { ConnectionBanner, Countdown, Footer, Hearts, Icon, LevelIcon, Padlock, Toasts, useToasts } from '../components/ui.js';
 import { Login } from './moderator.js';
 
 const KEY = 'erlab:modkey';
@@ -50,7 +50,8 @@ function Spectator({ modKey, code, onBadKey, onBadRoom }) {
   useKeepAlive(true);
   const conn = useConnection({ role: 'moderator', key: modKey }, {
     onEvent: (ev) => {
-      if (ev.type === 'opened') toast(`«${ev.name}» abrió el candado ${ev.lock} (${ordinal(ev.seq)})`, { icon: 'unlock' });
+      if (ev.type === 'opened') toast(ev.solo ? `${ev.name} sobrevivió al Caos (${ordinal(ev.seq)})` : `«${ev.name}» abrió el candado ${ev.lock} (${ordinal(ev.seq)})`, { icon: 'unlock' });
+      if (ev.type === 'eliminated') toast(`${ev.name} quedó eliminado · ${ev.alive} de ${ev.total} en pie`, { icon: 'heart', group: 'out' });
       if (ev.type === 'timeout') toast(`Tiempo agotado: «${ev.name}»`, { icon: 'clock' });
     },
   });
@@ -64,8 +65,10 @@ function Spectator({ modKey, code, onBadKey, onBadRoom }) {
     if (conn.fatal?.code === 'CLAVE_INVALIDA') onBadKey();
   }, [conn.fatal]);
   if (roomError) {
-    return html`<div class="theme-dark"><div class="cover">
+    return html`<div class="theme-dark"><div class="cover notice">
+      <${Padlock} color="#8890c4" size=${96} />
       <h1>${roomError}</h1>
+      <p class="muted">Revisa el código o abre otra sala para seguir el ranking.</p>
       <button class="btn lg" onClick=${onBadRoom}>Elegir otra sala</button>
     </div></div>`;
   }
@@ -96,7 +99,7 @@ export function LockClocks({ mod }) {
   return html`<div class="spec-clocks">
     ${mod.locks.filter((l) => used.has(l.id)).map((l) => html`<div class=${`spec-clock c-${LOCKS[l.id].key}`}>
       <${LevelIcon} lock=${l.id} size=${28} number=${false} />
-      <span class="tiny">C${l.id}</span>
+      <span class="tiny">${l.id === 0 ? 'Caos' : `C${l.id}`}</span>
       <${Countdown} ms=${remainingFor(mod, l.id)} paused=${mod.phase === 'paused'} />
     </div>`)}
   </div>`;
@@ -107,6 +110,9 @@ export function fromResults(results) {
     teamId: r.teamId,
     name: r.name,
     lock: r.lock,
+    solo: !!r.solo,
+    lives: r.lives,
+    livesLost: r.livesLost ?? 0,
     correct: r.correct,
     total: r.total,
     answered: r.answered,
@@ -130,7 +136,7 @@ function Body({ mod }) {
     return html`<main class="card stack center" style="justify-items:center">
       <${Icon} name="users" size=${40} />
       <h2>La partida aún no empieza</h2>
-      <p class="muted" style="margin:0">${mod.players.length} jugadores · ${mod.teams.length} equipos. El ranking aparecerá aquí en cuanto el moderador pulse <b>Iniciar</b>.</p>
+      <p class="muted" style="margin:0">${mod.players.length} jugadores · ${mod.config.mode === 'chaos' ? 'modo Caos' : `${mod.teams.length} equipos`}. El ranking aparecerá aquí en cuanto el moderador pulse <b>Iniciar</b>.</p>
     </main>`;
   }
   const finished = mod.phase === 'finished' && mod.results;
@@ -178,7 +184,8 @@ export function RankList({ rows, live }) {
 }
 
 function statusText(r) {
-  if (r.status === 'opened') return html`<span class="spec-status ok ico-text"><${Icon} name="unlock" size=${14} />Abrió ${ordinal(r.finishSeq)} · ${mmss(r.elapsedMs)}</span>`;
+  if (r.status === 'opened') return html`<span class="spec-status ok ico-text"><${Icon} name="unlock" size=${14} />${r.solo ? 'Sobrevivió' : 'Abrió'} ${ordinal(r.finishSeq)} · ${mmss(r.elapsedMs)}</span>`;
+  if (r.status === 'eliminated') return html`<span class="spec-status bad ico-text"><${Icon} name="x" size=${14} />Eliminado · resistió ${mmss(r.elapsedMs)}</span>`;
   if (r.status === 'time') return html`<span class="spec-status bad ico-text"><${Icon} name="clock" size=${14} />Tiempo agotado</span>`;
   if (r.status === 'moderator') return html`<span class="spec-status bad ico-text"><${Icon} name="lock" size=${14} />Cerrado por el moderador</span>`;
   return html`<span class="spec-status ico-text"><${Icon} name="bolt" size=${14} />Jugando · pregunta ${Math.min(r.answered + 1, r.total)} de ${r.total}</span>`;
@@ -195,7 +202,9 @@ function RankRow({ r, move, live }) {
     <div class="spec-main">
       <div class="spec-name">${r.name}</div>
       <div class="row" style="gap:.35rem .5rem">
-        <span class=${`pill ${LOCKS[r.lock].key}`}>C${r.lock} · ${LOCKS[r.lock].short}</span>
+        ${r.solo
+          ? html`<${Hearts} lost=${r.livesLost} total=${r.lives ?? 3} />`
+          : html`<span class=${`pill ${LOCKS[r.lock].key}`}>C${r.lock} · ${LOCKS[r.lock].short}</span>`}
         ${statusText(r)}
       </div>
       <div class="spec-bar" role="img" aria-label=${`${r.correct} aciertos de ${r.answered} respondidas, ${r.total} en total`}>

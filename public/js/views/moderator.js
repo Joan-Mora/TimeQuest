@@ -2,7 +2,7 @@ import { html, useEffect, useState } from '../lib/html.js';
 import { api, download, useConnection, useKeepAlive } from '../lib/connection.js';
 import { remainingFor, useTick } from '../lib/clock.js';
 import { LOCKS, grade, dec, mmss, phaseLabel, ordinal } from '../lib/format.js';
-import { Avatar, Icon, LevelIcon, Pins, Toasts, ConnectionBanner, useToasts } from '../components/ui.js';
+import { Avatar, Hearts, Icon, LevelIcon, MathText, Pins, Toasts, ConnectionBanner, useToasts } from '../components/ui.js';
 import { BankEditor } from './moderator-bank.js';
 import { speedBase } from './projector.js';
 import { LockClocks, Legend, RankList, fromResults } from './spectator.js';
@@ -99,7 +99,7 @@ function Panel({ modKey, onLogout }) {
   let body;
   if (!code) body = html`<${RoomPicker} conn=${conn} onChoose=${choose} onLogout=${onLogout} act=${act} />`;
   else if (!mod) {
-    body = html`<div class="cover" style="justify-items:center;text-align:center">
+    body = html`<div class="cover notice">
       <span class="pill">Sala ${code}</span>
       <p class="muted waiting-dots">Abriendo sala</p>
       <button class="btn sm secondary" onClick=${leave}><${Icon} name="back" size=${14} /> Ver mis salas</button>
@@ -269,7 +269,7 @@ function RoomPanel({ mod, act, modKey, toast, onLeave }) {
           <h1 class="top-title desktop-only">${current.title}</h1>
         </div>
         <span class="mobile-only"><${PhasePill} phase=${mod.phase} /></span>
-        <span class="top-count desktop-only"><${Icon} name="users" size=${16} /> ${online}/${mod.players.length} conectados · ${mod.teams.length} equipos</span>
+        <span class="top-count desktop-only"><${Icon} name="users" size=${16} /> ${online}/${mod.players.length} conectados · ${mod.config.mode === 'chaos' ? 'Modo Caos' : `${mod.teams.length} equipos`}</span>
         <span class="grow"></span>
         <${PrimaryAction} mod=${mod} act=${act} />
       </header>
@@ -310,14 +310,17 @@ function PrimaryAction({ mod, act }) {
   const Label = ({ long, short }) => html`<span class="lbl-long">${long}</span><span class="lbl-short">${short}</span>`;
   if (mod.phase === 'lobby') {
     const n = mod.players.length;
-    const ready = n > 0 && mod.teams.length > 0 && mod.players.every((p) => p.teamId);
+    const chaos = mod.config.mode === 'chaos';
+    const ready = chaos ? n > 1 : n > 0 && mod.teams.length > 0 && mod.players.every((p) => p.teamId);
     return html`<button class=${`btn primary-action ${ready && !cooling ? 'glow' : ''}`} disabled=${n === 0 || cooling} onClick=${() => {
       const unassigned = mod.players.filter((p) => !p.teamId).length;
-      const msg = mod.teams.length === 0
+      const msg = chaos
+        ? `¿Iniciar el Caos con ${n} jugador${n === 1 ? '' : 'es'}? Cada uno compite solo con ${mod.config.chaosLives} vidas.`
+        : mod.teams.length === 0
         ? `No hay equipos: se armarán automáticamente con ${n} jugadores. ¿Iniciar?`
         : unassigned ? `${unassigned} jugador(es) sin equipo se ubicarán en los equipos más pequeños. ¿Iniciar?` : '¿Iniciar la partida? Los cuatro candados arrancan a la vez.';
-      if (confirm(msg)) act('mod:start', {}, '¡Partida iniciada!');
-    }}><${Icon} name="play" size=${16} /><${Label} long="Iniciar partida" short="Iniciar" /></button>`;
+      if (confirm(msg)) act('mod:start', {}, chaos ? '¡Que empiece el Caos!' : '¡Partida iniciada!');
+    }}><${Icon} name=${chaos ? 'bolt' : 'play'} size=${16} /><${Label} long=${chaos ? 'Iniciar Caos' : 'Iniciar partida'} short="Iniciar" /></button>`;
   }
   if (mod.phase === 'running') return html`<button class="btn primary-action secondary" disabled=${cooling} onClick=${() => act('mod:pause')}><${Icon} name="pause" size=${16} /><${Label} long="Pausar" short="Pausar" /></button>`;
   if (mod.phase === 'paused') return html`<button class="btn primary-action teal glow" disabled=${cooling} onClick=${() => act('mod:resume')}><${Icon} name="play" size=${16} /><${Label} long="Reanudar" short="Reanudar" /></button>`;
@@ -332,9 +335,12 @@ function flowFor(mod) {
   const players = mod.players.length;
   const unassigned = mod.players.filter((p) => !p.teamId).length;
   const lobby = mod.phase === 'lobby';
+  const chaos = mod.config.mode === 'chaos';
   const steps = [
     { label: 'Invitar', done: players > 0 || !lobby },
-    { label: 'Equipos', done: !lobby || (players > 0 && mod.teams.length > 0 && unassigned === 0) },
+    chaos
+      ? { label: 'Caos', done: !lobby || players > 1 }
+      : { label: 'Equipos', done: !lobby || (players > 0 && mod.teams.length > 0 && unassigned === 0) },
     { label: 'Jugar', done: mod.phase === 'finished' },
     { label: 'Resultados', done: !!mod.podiumRevealed },
   ];
@@ -343,11 +349,15 @@ function flowFor(mod) {
 
   let hint;
   if (lobby && players === 0) hint = { title: 'Invita a los estudiantes', text: html`Proyecta el QR o comparte el enlace. Entran desde el celular con el código <b class="gold">${mod.code}</b>.`, cta: 'projector' };
+  else if (lobby && chaos && players === 1) hint = { title: '1 estudiante en la sala', text: 'El Caos es todos contra todos: espera a que entren más jugadores antes de iniciar.' };
+  else if (lobby && chaos) hint = { title: `¡Caos listo con ${players} jugadores!`, text: `Cada uno juega solo con ${mod.config.chaosLives} vidas y las preguntas de los 4 temas mezcladas. Quien llegue tarde entra con el reloj que quede.` };
+  else if (mod.phase === 'running' && chaos) hint = { title: 'Caos en curso', text: 'Sigue quién sigue en pie y el ranking en vivo. Puedes pausar o dar tiempo extra a todos.', cta: 'game' };
   else if (lobby && mod.teams.length === 0) hint = { title: `${players} estudiante${players === 1 ? '' : 's'} en la sala`, text: `Repártelos al azar en equipos de hasta ${mod.config.teamSize}; después puedes moverlos a mano. Si esperas a más, no pasa nada: quien llegue tarde se ubica solo.`, cta: 'assign' };
   else if (lobby && unassigned) hint = { title: `${unassigned} sin equipo`, text: 'Muévelos a un equipo o pulsa «Iniciar partida»: se ubicarán en los equipos más pequeños.' };
   else if (lobby) hint = { title: '¡Todo listo!', text: `${mod.teams.length} equipos con ${players} estudiantes. Cuando des la señal, pulsa «Iniciar partida».` };
   else if (mod.phase === 'running') hint = { title: 'Partida en curso', text: 'Sigue el avance y el ranking en vivo. Puedes pausar o dar tiempo extra a un candado.', cta: 'game' };
   else if (mod.phase === 'paused') hint = { title: 'Partida en pausa', text: 'Los relojes están detenidos. Pulsa «Reanudar» cuando todos estén listos.', cta: 'game' };
+  else if (!mod.podiumRevealed && chaos) hint = { title: '¡El Caos terminó!', text: 'Revela el podio en el proyector cuando quieras; luego abre el minuto de debate.', cta: 'results' };
   else if (!mod.podiumRevealed) hint = { title: '¡Se cerraron los candados!', text: 'Revela el podio en el proyector cuando quieras; luego abre el minuto de debate.', cta: 'results' };
   else hint = { title: 'Cierre de la clase', text: 'Descarga las notas en CSV o imprime el informe para tu registro.', cta: 'results' };
   return { steps, current, hint };
@@ -384,12 +394,21 @@ function FlowGuide({ mod, act, tab, go }) {
 function InviteCard({ mod, copy, joinUrl, compact }) {
   const online = mod.players.filter((p) => p.online).length;
   const unassigned = mod.players.filter((p) => !p.teamId).length;
-  const stats = [
-    ['En línea', online, ''],
-    ['Inscritos', mod.players.length, ''],
-    ['Equipos', mod.teams.length, ''],
-    ['Sin equipo', unassigned, unassigned ? 'warn' : ''],
-  ];
+  const chaos = mod.config.mode === 'chaos';
+  const alive = mod.teams.filter((t) => t.closedBy !== 'eliminated').length;
+  const stats = chaos
+    ? [
+        ['En línea', online, ''],
+        ['Inscritos', mod.players.length, ''],
+        mod.phase === 'lobby' ? ['Vidas', mod.config.chaosLives, ''] : ['En pie', `${alive}/${mod.teams.length}`, ''],
+        ['Preguntas', mod.locks[0]?.questionCount ?? '—', ''],
+      ]
+    : [
+        ['En línea', online, ''],
+        ['Inscritos', mod.players.length, ''],
+        ['Equipos', mod.teams.length, ''],
+        ['Sin equipo', unassigned, unassigned ? 'warn' : ''],
+      ];
   const Stats = () => html`<div class="stat-row">
     ${stats.map(([k, v, cls]) => html`<div class=${`stat ${cls}`}><b>${v}</b><span>${k}</span></div>`)}
   </div>`;
@@ -405,8 +424,75 @@ function InviteCard({ mod, copy, joinUrl, compact }) {
   </section>`;
 }
 
+function ModeCard({ mod, act }) {
+  const c = mod.config;
+  const chaos = c.mode === 'chaos';
+  const patch = (p, msg) => act('mod:updateConfig', { patch: p }, msg);
+  const setMode = (mode) => {
+    if (mode === c.mode) return;
+    if (mode === 'chaos' && mod.teams.length && !confirm('En modo Caos no hay equipos: se desarman los equipos actuales. ¿Continuar?')) return;
+    patch({ mode }, mode === 'chaos' ? 'Modo Caos activado' : 'Modo por equipos activado');
+  };
+  const lives = c.chaosLives ?? 3;
+  const opts = [
+    ['teams', 'users', 'Por equipos', `Equipos de hasta ${c.teamSize}, un candado por equipo. Votan juntos y el capitán confirma.`, 'c-l1'],
+    ['chaos', 'bolt', 'Caos', 'Battle royale: todos contra todos, los 4 temas mezclados y vidas. Cada error cuesta una.', 'c-l0'],
+  ];
+  return html`<section class="card stack sm">
+    <h2 class="sec-title"><span class="sec-icon"><${Icon} name="gear" size=${16} /></span>Modo de juego</h2>
+    <div class="mode-grid" role="radiogroup" aria-label="Modo de juego">
+      ${opts.map(([id, icon, title, desc, cls]) => html`<button role="radio" aria-checked=${c.mode === id} class=${`mode-opt ${cls} ${c.mode === id ? 'on' : ''}`} onClick=${() => setMode(id)}>
+        <span class="mode-icon"><${Icon} name=${icon} size=${20} /></span>
+        <span class="grow"><b>${title}</b><span class="small muted">${desc}</span></span>
+      </button>`)}
+    </div>
+    ${chaos ? html`<div class="field-grid three">
+      <div class="field"><label>Vidas por jugador</label>
+        <div class="stepper" role="group" aria-label="Vidas por jugador">
+          <button class="icon-btn xs" aria-label="Menos vidas" disabled=${lives <= 1} onClick=${() => patch({ chaosLives: lives - 1 })}><${Icon} name="minus" size=${14} /></button>
+          <span class="stepper-val"><b>${lives}</b><span class="tiny muted"><${Hearts} total=${Math.min(lives, 5)} /></span></span>
+          <button class="icon-btn xs" aria-label="Más vidas" disabled=${lives >= 10} onClick=${() => patch({ chaosLives: lives + 1 })}><${Icon} name="plus" size=${14} /></button>
+        </div>
+      </div>
+      <div class="field"><label>Tiempo total (min)</label><input class="input" type="number" min="0.5" max="60" step="0.5" value=${(c.timeLimitsSec[0] ?? 900) / 60}
+        onChange=${(e) => patch({ timeLimitsSec: { 0: Math.round(Number(e.target.value) * 60) } })} /></div>
+      <div class="field"><label>Preguntas por tema</label><input class="input" type="number" min="1" max="10" value=${c.questionsPerLock}
+        onChange=${(e) => patch({ questionsPerLock: Number(e.target.value) })} /></div>
+    </div>
+    <p class="tiny muted" style="margin:0">${mod.locks[0]?.questionCount ?? '—'} preguntas en total, intercaladas y barajadas por jugador. Nota individual con la misma fórmula: ${Math.round(c.scoring.weights.accuracy * 100)} % acierto + ${Math.round(c.scoring.weights.speed * 100)} % orden de llegada.</p>` : null}
+  </section>`;
+}
+
+function ChaosPlayers({ mod, act }) {
+  const lobby = mod.phase === 'lobby';
+  const byPlayer = new Map(mod.teams.map((t) => [t.members[0]?.id, t]));
+  return html`<section class="stack sm">
+    <div class="sec-head"><h2 class="sec-title">Jugadores <span class="count">${mod.players.length}</span></h2></div>
+    <p class="small muted" style="margin:0">${lobby ? 'En Caos no hay equipos: cada estudiante compite solo. Quien entre con la partida en curso se une con el reloj que quede.' : 'Cada jugador compite solo. Retirar a alguien lo saca también del ranking.'}</p>
+    ${mod.players.length === 0
+      ? html`<div class="empty"><${Icon} name="users" size=${30} /><span>Aún no hay jugadores. Cuando entren, aparecerán aquí.</span></div>`
+      : html`<ul class="member-list chaos-roster">${mod.players.map((p) => {
+          const t = byPlayer.get(p.id);
+          return html`<li key=${p.id} class="member-row">
+            <${Avatar} id=${p.id} name=${p.name} size=${28} online=${p.online} title=${p.online ? `${p.name} · conectado` : `${p.name} · desconectado`} />
+            <span class=${`grow member-name ${p.online ? '' : 'off'}`}>${p.name}</span>
+            ${t ? html`<${Hearts} lost=${t.livesLost} total=${t.lives ?? 3} />` : null}
+            <button class="icon-btn xs danger-ghost" title="Retirar de la sala" aria-label=${`Retirar a ${p.name}`}
+              onClick=${() => confirm(`¿Retirar a ${p.name} de la sala?`) && act('mod:kick', { playerId: p.id })}><${Icon} name="x" size=${14} /></button>
+          </li>`;
+        })}</ul>`}
+  </section>`;
+}
+
 function TeamsTab({ mod, act, copy, joinUrl }) {
   const lobby = mod.phase === 'lobby';
+  if (mod.config.mode === 'chaos') {
+    return html`
+      <${InviteCard} mod=${mod} copy=${copy} joinUrl=${joinUrl} compact=${!lobby} />
+      ${lobby ? html`<${ModeCard} mod=${mod} act=${act} />` : null}
+      <${ChaosPlayers} mod=${mod} act=${act} />
+    `;
+  }
   const [teamCount, setTeamCount] = useState(mod.config.teamCount || 0);
   const autoCount = Math.ceil(mod.players.length / mod.config.teamSize) || 0;
   const unassigned = mod.players.filter((p) => !p.teamId);
@@ -426,6 +512,7 @@ function TeamsTab({ mod, act, copy, joinUrl }) {
 
   return html`
     <${InviteCard} mod=${mod} copy=${copy} joinUrl=${joinUrl} compact=${!lobby} />
+    ${lobby ? html`<${ModeCard} mod=${mod} act=${act} />` : null}
     <section class="stack sm">
       <div class="sec-head">
         <h2 class="sec-title">Equipos <span class="count">${mod.teams.length}</span></h2>
@@ -486,7 +573,8 @@ function GameTab({ mod, act }) {
   const inGame = mod.phase === 'running' || mod.phase === 'paused';
   const finished = mod.phase === 'finished' && mod.results;
   const nameOf = (id) => mod.players.find((p) => p.id === id)?.name ?? '—';
-  const usedLocks = [...new Set(mod.teams.map((t) => t.lock))].sort();
+  const chaos = mod.config.mode === 'chaos';
+  const usedLocks = chaos ? [] : [...new Set(mod.teams.map((t) => t.lock))].sort();
 
   if (mod.phase === 'lobby') {
     return html`<div class="empty big">
@@ -512,10 +600,10 @@ function GameTab({ mod, act }) {
           <button class="btn sm secondary" onClick=${() => act('mod:addTime', { lock, seconds: 30 })}>+30 s</button>
           <button class="btn sm secondary" onClick=${() => act('mod:addTime', { lock, seconds: 60 })}>+1 min</button>
         </div>
-      </div>` : html`<p class="small muted grow" style="margin:0">Partida terminada. Puedes reiniciarla para jugar otra ronda con los mismos equipos.</p>`}
+      </div>` : html`<p class="small muted grow" style="margin:0">${chaos ? 'Caos terminado. Puedes reiniciarlo para jugar otra ronda con los mismos jugadores.' : 'Partida terminada. Puedes reiniciarla para jugar otra ronda con los mismos equipos.'}</p>`}
       <div class="ctrl-group end">
-        ${inGame ? html`<button class="btn sm danger" onClick=${() => confirm('¿Terminar la partida ahora? Los candados abiertos se cierran con lo respondido.') && act('mod:end')}><${Icon} name="flag" size=${14} /> Terminar</button>` : null}
-        <button class="btn sm secondary" onClick=${() => confirm('¿Reiniciar? Se borra el progreso y vuelven al lobby (se conservan jugadores y equipos).') && act('mod:reset', {}, 'De vuelta al lobby')}><${Icon} name="rotate" size=${14} /> Reiniciar</button>
+        ${inGame ? html`<button class="btn sm danger" onClick=${() => confirm(chaos ? '¿Terminar el Caos ahora? Cada jugador queda con lo que haya respondido.' : '¿Terminar la partida ahora? Los candados abiertos se cierran con lo respondido.') && act('mod:end')}><${Icon} name="flag" size=${14} /> Terminar</button>` : null}
+        <button class="btn sm secondary" onClick=${() => confirm(chaos ? '¿Reiniciar? Se borra el progreso y vuelven al lobby (se conservan los jugadores).' : '¿Reiniciar? Se borra el progreso y vuelven al lobby (se conservan jugadores y equipos).') && act('mod:reset', {}, 'De vuelta al lobby')}><${Icon} name="rotate" size=${14} /> Reiniciar</button>
       </div>
     </section>
     ${inGame ? html`<${LockClocks} mod=${mod} />` : null}
@@ -527,25 +615,31 @@ function GameTab({ mod, act }) {
         ${weights ? html`<${Legend} weights=${weights} live=${!finished} nextSpeed=${mod.live?.nextSpeed} />` : null}
       </section>
       <section class="stack sm">
-        <h2 class="sec-title">Avance por equipo</h2>
+        <h2 class="sec-title">${chaos ? 'Avance por jugador' : 'Avance por equipo'}</h2>
         <div class="prog-grid">
           ${mod.teams.map((t) => {
             const answers = t.answers.map((a) => ({ correct: a.correct }));
             const state = t.opened ? 'opened' : t.closedBy ? 'closed' : '';
+            const closedPill = t.closedBy === 'eliminated'
+              ? html`<span class="pill bad"><${Icon} name="x" size=${13} />Eliminado</span>`
+              : html`<span class="pill ghost"><${Icon} name=${t.closedBy === 'time' ? 'clock' : 'lock'} size=${13} />${t.closedBy === 'time' ? 'Tiempo' : 'Cerrado'}</span>`;
             return html`<article key=${t.id} class=${`prog-card c-${LOCKS[t.lock].key} ${state}`}>
               <div class="row between nowrap">
-                <div class="row nowrap" style="min-width:0;gap:.5rem"><${LevelIcon} lock=${t.lock} size=${28} number=${false} /><b class="prog-name">${t.name}</b></div>
+                <div class="row nowrap" style="min-width:0;gap:.5rem">${t.solo
+                  ? html`<${Avatar} id=${t.members[0]?.id} name=${t.name} size=${28} online=${t.members[0]?.online} />`
+                  : html`<${LevelIcon} lock=${t.lock} size=${28} number=${false} />`}<b class="prog-name">${t.name}</b></div>
                 ${t.opened ? html`<span class="pill ok"><${Icon} name="unlock" size=${13} />${ordinal(t.finishSeq)}</span>`
-                  : t.closedBy ? html`<span class="pill ghost"><${Icon} name=${t.closedBy === 'time' ? 'clock' : 'lock'} size=${13} />${t.closedBy === 'time' ? 'Tiempo' : 'Cerrado'}</span>`
+                  : t.closedBy ? closedPill
+                  : t.solo ? html`<${Hearts} lost=${t.livesLost} total=${t.lives ?? 3} />`
                   : html`<b class="num gold">${mmss(remainingFor(mod, t.lock))}</b>`}
               </div>
               <${Pins} total=${t.total} answers=${answers} current=${t.closedBy === null && !t.opened ? t.currentIndex : null} />
-              <div class="small row between"><span>Aciertos <b>${t.correct ?? 0}/${t.total}</b></span><span class="muted">XP ${t.xp ?? 0}</span></div>
-              ${t.currentPrompt ? html`<div class="tiny muted clamp-2">P${t.currentIndex + 1}: ${t.currentPrompt}</div>` : null}
-              <div class="row" style="gap:.3rem">
+              <div class="small row between"><span>Aciertos <b>${t.correct ?? 0}/${t.total}</b></span><span class="muted">${t.solo ? `Vidas ${Math.max(0, (t.lives ?? 0) - t.livesLost)}/${t.lives ?? '—'}` : `XP ${t.xp ?? 0}`}</span></div>
+              ${t.currentPrompt ? html`<div class="tiny muted clamp-2">P${t.currentIndex + 1}: <${MathText} text=${t.currentPrompt} /></div>` : null}
+              ${t.solo ? null : html`<div class="row" style="gap:.3rem">
                 ${t.members.map((m) => html`<${Avatar} id=${m.id} name=${m.name} size=${26} online=${m.online} captain=${m.id === t.captainId} />`)}
                 ${t.captainId ? html`<span class="tiny muted">Capitán: ${nameOf(t.captainId)} · ${t.votesCount} voto(s)</span>` : null}
-              </div>
+              </div>`}
             </article>`;
           })}
         </div>
@@ -673,6 +767,7 @@ function ConfigTab({ mod, act }) {
 function ResultsTab({ mod, modKey, toast }) {
   const r = mod.results;
   const lobby = mod.phase === 'lobby';
+  const chaos = mod.config.mode === 'chaos';
   const dl = async (kind, name) => {
     try {
       await download(`/api/rooms/${mod.code}/export/${kind}`, modKey, name);
@@ -691,14 +786,15 @@ function ResultsTab({ mod, modKey, toast }) {
     <section class="stack sm">
       <h2 class="sec-title">Exportar</h2>
       <div class="export-grid">
-        <${Tile} icon="download" title="CSV por equipo" desc="Ranking, puntajes y desglose" onClick=${() => dl('equipos.csv', 'equipos.csv')} />
-        <${Tile} icon="download" title="CSV por estudiante" desc="Nota individual y participación" onClick=${() => dl('estudiantes.csv', 'estudiantes.csv')} />
-        <${Tile} icon="file" title="Informe PDF" desc="Para imprimir o guardar" href=${`/informe?sala=${mod.code}`} />
+        <${Tile} icon="file" title="Informe PDF" desc="Diseño de la actividad, para imprimir o guardar" href=${`/informe?sala=${mod.code}`} />
+        <${Tile} icon="bars" title="Excel (.xlsx)" desc="Resumen, ranking, notas y preguntas en hojas con formato" onClick=${() => dl('informe.xlsx', `informe-${mod.code}.xlsx`)} />
+        <${Tile} icon="download" title=${chaos ? 'CSV por jugador' : 'CSV por equipo'} desc="Ranking, puntajes y desglose" onClick=${() => dl('equipos.csv', `${chaos ? 'jugadores' : 'equipos'}-${mod.code}.csv`)} />
+        <${Tile} icon="download" title="CSV por estudiante" desc="Nota individual y participación" onClick=${() => dl('estudiantes.csv', `estudiantes-${mod.code}.csv`)} />
       </div>
-      ${lobby ? html`<p class="tiny muted" style="margin:0">Disponible cuando empiece la partida. Mientras se juega, los CSV salen parciales.</p>` : null}
+      ${lobby ? html`<p class="tiny muted" style="margin:0">Disponible cuando empiece la partida. Mientras se juega, los archivos salen parciales.</p>` : null}
     </section>
     ${!r
-      ? html`<div class="empty big"><${Icon} name="trophy" size=${36} /><b>Aún no hay resultados definitivos</b><span>Aparecen cuando todos los candados se cierran o pulsas «Terminar» en «En vivo».</span></div>`
+      ? html`<div class="empty big"><${Icon} name="trophy" size=${36} /><b>Aún no hay resultados definitivos</b><span>${chaos ? 'Aparecen cuando todos terminan o caen, o cuando pulsas «Terminar» en «En vivo».' : 'Aparecen cuando todos los candados se cierran o pulsas «Terminar» en «En vivo».'}</span></div>`
       : html`
         ${mod.podiumRevealed ? null : html`<div class="warn-box small"><b>El podio aún no se revela en el proyector.</b> Pulsa el botón dorado del trofeo, arriba a la derecha, cuando quieras mostrarlo a la clase.</div>`}
         <section class="stack sm">
@@ -708,7 +804,22 @@ function ResultsTab({ mod, modKey, toast }) {
         </section>
         <section class="card stack sm">
           <h2 class="sec-title">Notas por estudiante</h2>
-          <p class="small muted" style="margin:0">La nota individual es la del equipo (trabajo cooperativo). La participación te ayuda a decidir si ajustar casos puntuales.</p>
+          ${r.mode === 'chaos'
+            ? html`<p class="small muted" style="margin:0">En Caos cada nota es individual: aciertos sobre el total de preguntas más la velocidad por orden de llegada. Quien cayó recibe la velocidad mínima.</p>
+              <table class="table rtable">
+                <thead><tr><th>Estudiante</th><th>Estado</th><th>Vidas</th><th>Puesto</th><th>Nota</th><th>Aciertos</th><th>Respondidas</th><th>Tiempo</th></tr></thead>
+                <tbody>${r.teams.map((t) => html`<tr>
+                  <td data-label="Estudiante"><b>${t.name}</b></td>
+                  <td data-label="Estado">${t.opened ? `Sobrevivió ${ordinal(t.finishSeq)}` : t.closedBy === 'eliminated' ? 'Eliminado' : t.closedBy === 'time' ? 'Sin tiempo' : 'En pie al cierre'}</td>
+                  <td data-label="Vidas"><${Hearts} lost=${t.livesLost} total=${t.lives ?? 3} /></td>
+                  <td data-label="Puesto">${t.position}</td>
+                  <td data-label="Nota"><span class="grade-chip sm">${grade(t.grade)}</span></td>
+                  <td data-label="Aciertos">${t.correct}/${t.total}</td>
+                  <td data-label="Respondidas">${t.answered}</td>
+                  <td data-label="Tiempo">${t.elapsedMs !== null ? mmss(t.elapsedMs) : '—'}</td>
+                </tr>`)}</tbody>
+              </table>`
+            : html`<p class="small muted" style="margin:0">La nota individual es la del equipo (trabajo cooperativo). La participación te ayuda a decidir si ajustar casos puntuales.</p>
           <table class="table rtable">
             <thead><tr><th>Estudiante</th><th>Equipo</th><th>Candado</th><th>Puesto</th><th>Nota</th><th>Votos</th><th>Confirmó</th><th>Participación</th></tr></thead>
             <tbody>${r.students.map((s) => html`<tr>
@@ -721,7 +832,7 @@ function ResultsTab({ mod, modKey, toast }) {
               <td data-label="Confirmó">${s.confirms}</td>
               <td data-label="Particip." class=${s.participation < 40 ? 'low' : ''}>${s.participation} %</td>
             </tr>`)}</tbody>
-          </table>
+          </table>`}
         </section>
         <section class="card stack sm">
           <h2 class="sec-title">Dificultad real de las preguntas</h2>
@@ -729,7 +840,7 @@ function ResultsTab({ mod, modKey, toast }) {
             ${r.questionStats.map((s) => html`<div class=${`qstat c-${LOCKS[s.lock].key}`}>
               <span class="qstat-lock">C${s.lock}</span>
               <span class="qstat-main">
-                <span class="small clamp-2">${s.prompt}</span>
+                <span class="small clamp-2"><${MathText} text=${s.prompt} /></span>
                 <span class="stat-bar"><i style=${`width:${s.accuracy ?? 0}%`}></i></span>
               </span>
               <span class="qstat-val"><b>${s.accuracy ?? '—'}${s.accuracy !== null ? ' %' : ''}</b><span class="tiny muted">${s.correct}/${s.attempts}</span></span>

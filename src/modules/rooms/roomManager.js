@@ -31,7 +31,8 @@ export class RoomManager extends EventEmitter {
         await this.store.deleteRoom(room.code).catch(() => {});
         continue;
       }
-      room.config = { ...defaultConfig(), ...room.config };
+      const defaults = defaultConfig();
+      room.config = { ...defaults, ...room.config, timeLimitsSec: { ...defaults.timeLimitsSec, ...room.config?.timeLimitsSec } };
       room.log ??= [];
       const paused = restoreAfterRestart(room);
       this.rooms.set(room.code, room);

@@ -3,14 +3,21 @@ import { DEFAULT_SCORING, normalizeWeights } from '../scoring/scoring.js';
 
 export const PHASES = ['lobby', 'running', 'paused', 'finished'];
 export const FEEDBACK_MODES = ['instant', 'verdict', 'end'];
+/** «teams»: equipos por candado. «chaos»: battle royale, todos contra todos con los 4 temas mezclados. */
+export const GAME_MODES = ['teams', 'chaos'];
+export const CHAOS_LOCK = 0;
+
+export const isChaos = (room) => room.config.mode === 'chaos';
 
 export function defaultConfig() {
   return {
     title: 'El Laboratorio Sellado',
+    mode: 'teams',
+    chaosLives: 3,
     teamSize: 5,
     teamCount: 0,
     questionsPerLock: 5,
-    timeLimitsSec: { 1: 480, 2: 480, 3: 480, 4: 480 },
+    timeLimitsSec: { 0: 900, 1: 480, 2: 480, 3: 480, 4: 480 },
     scoring: {
       weights: { ...DEFAULT_SCORING.weights },
       speedTable: [...DEFAULT_SCORING.speedTable],
@@ -65,11 +72,18 @@ export function applyConfigPatch(room, patch = {}) {
     if (patch.teamCount !== undefined) c.teamCount = clampInt(patch.teamCount, 0, 16, c.teamCount);
     if (patch.questionsPerLock !== undefined) c.questionsPerLock = clampInt(patch.questionsPerLock, 1, 10, c.questionsPerLock);
     if (typeof patch.shuffle === 'boolean') c.shuffle = patch.shuffle;
+    if (patch.chaosLives !== undefined) c.chaosLives = clampInt(patch.chaosLives, 1, 10, c.chaosLives ?? 3);
+    if (GAME_MODES.includes(patch.mode) && patch.mode !== c.mode) {
+      c.mode = patch.mode;
+      room.teams = {};
+      room.teamOrder = [];
+      for (const p of Object.values(room.players)) p.teamId = null;
+    }
   }
   if (patch.timeLimitsSec && typeof patch.timeLimitsSec === 'object' && !locked) {
-    for (const lock of [1, 2, 3, 4]) {
+    for (const lock of [0, 1, 2, 3, 4]) {
       if (patch.timeLimitsSec[lock] !== undefined) {
-        c.timeLimitsSec[lock] = clampInt(patch.timeLimitsSec[lock], 30, 3600, c.timeLimitsSec[lock]);
+        c.timeLimitsSec[lock] = clampInt(patch.timeLimitsSec[lock], 30, 3600, c.timeLimitsSec[lock] ?? 900);
       }
     }
   }

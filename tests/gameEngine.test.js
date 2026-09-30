@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { createRoom } from '../src/modules/rooms/roomModel.js';
+import { applyConfigPatch, createRoom } from '../src/modules/rooms/roomModel.js';
 import { joinRoom } from '../src/modules/rooms/playerService.js';
 import { autoAssign } from '../src/modules/teams/teamService.js';
 import { validateBank } from '../src/modules/questions/questionBank.js';
@@ -234,4 +234,133 @@ test('quien llega tarde entra al equipo con menos integrantes y puede jugar', ()
   assert.ok(team && team.progress);
   const sizes = Object.values(room.teams).map((t) => Object.values(room.players).filter((p) => p.teamId === t.id).length);
   assert.deepEqual(sizes.sort(), [5, 5]);
+});
+
+// ---------------------------------------------------------------------------
+// Modo Caos (battle royale)
+// ---------------------------------------------------------------------------
+function setupChaos(playerCount = 4, now = 1_000_000, lives = 3) {
+  const room = createRoom('CAOS1', now);
+  applyConfigPatch(room, { mode: 'chaos', chaosLives: lives });
+  for (let i = 0; i < playerCount; i++) joinRoom(room, `Jugador ${i + 1}`, { now: now + i });
+  engine.startGame(room, bank, now + 1000);
+  return room;
+}
+
+test('caos: cada jugador compite solo con los cuatro temas mezclados', () => {
+  const room = setupChaos(4);
+  const solos = Object.values(room.teams);
+  assert.equal(solos.length, 4);
+  for (const t of solos) {
+    assert.equal(t.solo, true);
+    assert.equal(t.lock, 0);
+    assert.equal(t.progress.order.length, 20);
+    const topics = new Set(t.progress.order.map((qid) => room.game.questions[qid].lock));
+    assert.deepEqual([...topics].sort(), [1, 2, 3, 4]);
+    assert.equal(Object.values(room.players).filter((p) => p.teamId === t.id).length, 1);
+  }
+});
+
+test('caos: no se pueden armar equipos', () => {
+  const room = createRoom('CAOS2');
+  applyConfigPatch(room, { mode: 'chaos' });
+  joinRoom(room, 'Ana');
+  assert.throws(() => autoAssign(room, {}), /modo Caos/);
+});
+
+test('caos: cada error cuesta una vida y a la tercera queda eliminado', () => {
+  const room = setupChaos(3);
+  const [a, b, c] = Object.values(room.teams);
+  let r = answerCurrent(room, a, { correct: false, now: 1_010_000 });
+  assert.equal(r.livesLeft, 2);
+  assert.equal(r.eliminated, false);
+  answerCurrent(room, a, { correct: true, now: 1_011_000 });
+  answerCurrent(room, a, { correct: false, now: 1_012_000 });
+  r = answerCurrent(room, a, { correct: false, now: 1_013_000 });
+  assert.equal(r.eliminated, true);
+  assert.equal(a.progress.closedBy, 'eliminated');
+  assert.deepEqual(engine.chaosAlive(room), { alive: 2, total: 3 });
+  assert.throws(() => answerCurrent(room, a, { now: 1_014_000 }), /cerrado/);
+
+  // b sobrevive respondiendo todo; c se queda sin tiempo.
+  for (let i = 0; i < 20; i++) answerCurrent(room, b, { correct: i !== 0 && i !== 10, now: 1_020_000 + i });
+  assert.equal(b.progress.finishSeq, 1);
+  assert.equal(b.progress.closedBy, null);
+  engine.endGame(room, 1_100_000);
+  const rows = room.results.teams;
+  assert.equal(room.results.mode, 'chaos');
+  assert.equal(rows[0].teamId, b.id);
+  assert.ok(rows[0].badges.some((x) => x.label === 'Superviviente del Caos'));
+  // Con 1 acierto cada uno, c (en pie hasta el final) supera a a (eliminado antes).
+  const ra = rows.find((x) => x.teamId === a.id);
+  const rc = rows.find((x) => x.teamId === c.id);
+  assert.equal(ra.livesLost, 3);
+  assert.ok(rc.position > rows[0].position);
+  assert.equal(room.results.students.length, 3);
+  assert.ok(room.results.questionStats.length > 0);
+});
+
+test('caos: un eliminado no puede volver a entrar para recuperar vidas', () => {
+  const room = createRoom('CAOS9', 1_000_000);
+  applyConfigPatch(room, { mode: 'chaos', chaosLives: 3 });
+  const { player: ana } = joinRoom(room, 'Ana', { deviceId: 'device-ana-0001' });
+  joinRoom(room, 'Beto', { deviceId: 'device-beto-001' });
+  engine.startGame(room, bank, 1_001_000);
+  const team = room.teams[ana.teamId];
+  for (let i = 0; i < 3; i++) answerCurrent(room, team, { correct: false, now: 1_010_000 + i });
+  assert.equal(team.progress.closedBy, 'eliminated');
+
+  // Desde el mismo navegador (aunque cambie el nombre) recupera al mismo jugador eliminado.
+  const again = joinRoom(room, 'Ana otra vez', { deviceId: 'device-ana-0001' });
+  assert.equal(again.player.id, ana.id);
+  assert.equal(Object.keys(room.players).length, 2);
+  assert.throws(() => answerCurrent(room, team, { now: 1_020_000 }), /cerrado/);
+
+  // Desde otro navegador no puede reutilizar su nombre.
+  assert.throws(() => joinRoom(room, 'ana', { deviceId: 'device-otro-001' }), /Ya hay un jugador con ese nombre/);
+});
+
+test('caos: el que resiste más tiempo desempata frente a un eliminado', () => {
+  const room = setupChaos(2, 1_000_000, 1);
+  const [a, b] = Object.values(room.teams);
+  answerCurrent(room, a, { correct: false, now: 1_010_000 });
+  answerCurrent(room, b, { correct: false, now: 1_050_000 });
+  assert.equal(room.phase, 'running');
+  assert.ok(engine.allClosed(room));
+  engine.endGame(room, 1_060_000, 'completed');
+  assert.equal(room.results.teams[0].teamId, b.id, 'b cayó después, queda por encima');
+  assert.match(room.results.teams[1].tiebreak, /resistió/);
+});
+
+test('caos: quien llega tarde entra solo y con el reloj común', () => {
+  const room = setupChaos(2);
+  const { player } = joinRoom(room, 'Tardío', { now: 1_200_000 });
+  const team = room.teams[player.teamId];
+  assert.ok(team.solo && team.progress && team.progress.order.length === 20);
+});
+
+test('caos: las vistas muestran vidas y veredicto aunque el feedback sea «al final»', () => {
+  const room = setupChaos(2);
+  room.config.feedbackMode = 'end';
+  const [a] = Object.values(room.teams);
+  answerCurrent(room, a, { correct: false, now: 1_010_000 });
+  const view = teamView(room, a, { isOnline: () => true });
+  assert.equal(view.lives, 3);
+  assert.equal(view.livesLost, 1);
+  assert.equal(view.history[0].correct, false);
+  assert.equal(view.history[0].solution, null, 'la solución sigue oculta mientras otros juegan');
+  assert.equal(typeof view.question.lock, 'number');
+  const pub = publicView(room, { bank, isOnline: () => true });
+  assert.equal(pub.locks.length, 1);
+  assert.equal(pub.locks[0].id, 0);
+  assert.deepEqual(pub.chaos, { alive: 2, total: 2 });
+  assert.equal(pub.config.mode, 'chaos');
+});
+
+test('caos: reiniciar vuelve al lobby sin equipos', () => {
+  const room = setupChaos(3);
+  engine.endGame(room, 1_100_000);
+  engine.resetGame(room);
+  assert.equal(room.teamOrder.length, 0);
+  assert.ok(Object.values(room.players).every((p) => p.teamId === null));
 });

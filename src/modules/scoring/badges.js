@@ -2,15 +2,22 @@
  * Insignias: solo reconocimiento, no cambian la nota.
  * Cada una tiene un id estable para que el frontend dibuje su ícono.
  */
-export function computeBadges({ lockBadge, answers, total, openedPosition, remainingMsAtOpen }) {
+export function computeBadges({ lockBadge, answers, total, openedPosition, remainingMsAtOpen, chaos = false, lives = 0, livesLost = 0 }) {
   const badges = [];
   const correct = answers.filter((a) => a.correct).length;
 
-  if (total > 0 && correct / total >= 0.6) {
+  if (chaos) {
+    if (openedPosition) badges.push({ id: 'lock', label: lockBadge, desc: 'Sobrevivió al Caos respondiendo todas sus preguntas.' });
+    if (openedPosition && lives > 1 && livesLost === lives - 1) {
+      badges.push({ id: 'survivor', label: 'Con la última vida', desc: 'Terminó el Caos con una sola vida en pie.' });
+    }
+  } else if (total > 0 && correct / total >= 0.6) {
     badges.push({ id: 'lock', label: lockBadge, desc: 'Abrió su candado con al menos 60 % de aciertos.' });
   }
   if (openedPosition === 1) {
-    badges.push({ id: 'first', label: 'Llave maestra', desc: 'Primer equipo en abrir su candado.' });
+    badges.push(chaos
+      ? { id: 'first', label: 'Llave maestra', desc: 'Primero en terminar el Caos.' }
+      : { id: 'first', label: 'Llave maestra', desc: 'Primer equipo en abrir su candado.' });
   }
   if (total > 0 && correct === total) {
     badges.push({ id: 'perfect', label: 'Pleno estadístico', desc: 'Todas las respuestas correctas.' });

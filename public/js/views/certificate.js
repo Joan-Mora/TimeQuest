@@ -9,7 +9,9 @@ export function Certificate() {
   const team = q.get('equipo') || '';
   const position = Number(q.get('puesto')) || null;
   const rank = q.get('rango') || 'Científico de Datos';
-  const lock = LOCKS[Number(q.get('candado'))] ? Number(q.get('candado')) : null;
+  const lock = q.get('candado') !== null && LOCKS[Number(q.get('candado'))] ? Number(q.get('candado')) : null;
+  const chaos = lock === 0;
+  const total = Number(q.get('total')) || null;
   const badges = (q.get('insignias') || '').split('|').filter(Boolean).slice(0, 6);
   const date = new Date().toLocaleDateString('es-CO', { day: 'numeric', month: 'long', year: 'numeric' });
 
@@ -34,11 +36,14 @@ export function Certificate() {
           <div class="small" style="opacity:.8">Se otorga a</div>
           <div class="name">${name || 'Tu nombre'}</div>
           <p style="max-width:40em;margin:.2em 0;opacity:.9">
-            por escapar del Laboratorio Sellado aplicando estimación, pruebas de hipótesis, regresión lineal y ANOVA
-            ${team ? html` junto al equipo <b class="gold">${team}</b>` : null}${lock ? html`, desbloqueando el candado <b>${lock} · ${LOCKS[lock].short}</b>` : null}.
+            ${chaos
+              ? html`por enfrentar el <b class="gold">Modo Caos</b> del Laboratorio Sellado, todos contra todos, aplicando estimación, pruebas de hipótesis, regresión lineal y ANOVA${total ? html` entre <b>${total}</b> participantes` : null}.`
+              : html`por escapar del Laboratorio Sellado aplicando estimación, pruebas de hipótesis, regresión lineal y ANOVA
+                ${team ? html` junto al equipo <b class="gold">${team}</b>` : null}${lock ? html`, desbloqueando el candado <b>${lock} · ${LOCKS[lock].short}</b>` : null}.`}
           </p>
           <div class="row" style="justify-content:center;gap:.5rem">
             <span class="pill">Rango: ${rank}</span>
+            ${chaos ? html`<span class="pill l0">Modo Caos</span>` : null}
             ${position ? html`<span class="pill l3">${position}.º lugar</span>` : null}
             ${badges.map((b) => html`<span class="pill ghost">${b}</span>`)}
           </div>

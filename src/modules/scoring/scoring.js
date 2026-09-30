@@ -86,6 +86,7 @@ export function computeResults(teams, scoringConfig = DEFAULT_SCORING) {
       opened: !!t.opened,
       finishSeq: t.opened ? t.finishSeq : null,
       elapsedMs: t.elapsedMs ?? null,
+      survivedMs: t.survivedMs ?? null,
       breakdown: {
         accuracyPoints: acc,
         accuracy5: acc5,
@@ -112,6 +113,8 @@ export function computeResults(teams, scoringConfig = DEFAULT_SCORING) {
 const TIEBREAKS = [
   { key: 'correct', label: 'más respuestas correctas', cmp: (a, b) => b.correct - a.correct },
   { key: 'opened', label: 'abrió el candado antes de que se acabara el tiempo', cmp: (a, b) => Number(b.opened) - Number(a.opened) },
+  // Solo aplica en modo Caos a quien no terminó: resistir más tiempo en pie vale más.
+  { key: 'survived', label: 'resistió más tiempo en pie', cmp: (a, b) => (b.survivedMs ?? 0) - (a.survivedMs ?? 0) },
   { key: 'elapsed', label: 'menor tiempo total', cmp: (a, b) => (a.elapsedMs ?? Infinity) - (b.elapsedMs ?? Infinity) },
   { key: 'seq', label: 'abrió primero su candado', cmp: (a, b) => (a.finishSeq ?? Infinity) - (b.finishSeq ?? Infinity) },
   { key: 'answered', label: 'más preguntas respondidas', cmp: (a, b) => b.answered - a.answered },

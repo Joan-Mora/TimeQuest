@@ -18,6 +18,7 @@
  *   --keep      No borrar la sala al terminar (para verla en el panel)
  *   --room      Unir los bots a una sala EXISTENTE (ensayo): no arma equipos ni inicia;
  *               los bots juegan cuando el moderador pulse «Iniciar» y la sala se conserva.
+ *   --modo      «equipos» (por defecto) o «caos»: battle royale, cada bot juega solo con vidas.
  */
 import { io } from 'socket.io-client';
 
@@ -36,6 +37,7 @@ const MINUTES = Number(arg('minutes', 3));
 const CHAOS = Number(arg('chaos', 0.1));
 const ROOM = arg('room', null);
 const KEEP = Boolean(arg('keep', false)) || Boolean(ROOM);
+const MODE = String(arg('modo', 'equipos')) === 'caos' ? 'chaos' : 'teams';
 const MAX_RUN_MS = ROOM ? 60 * 60_000 : (MINUTES * 60 + 60) * 1000;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -181,8 +183,9 @@ async function main() {
   const watched = await emitAck(mod, 'mod:watch', { code });
   if (!watched?.ok) throw new Error(`La sala ${code} no existe.`);
   if (!ROOM) {
-    await emitAck(mod, 'mod:updateConfig', { patch: { timeLimitsSec: { 1: MINUTES * 60, 2: MINUTES * 60, 3: MINUTES * 60, 4: MINUTES * 60 } } });
-    console.log(`  Sala ${code} creada`);
+    const secs = MINUTES * 60;
+    await emitAck(mod, 'mod:updateConfig', { patch: { mode: MODE, timeLimitsSec: { 0: secs, 1: secs, 2: secs, 3: secs, 4: secs } } });
+    console.log(`  Sala ${code} creada${MODE === 'chaos' ? ' (modo Caos)' : ''}`);
   }
 
   const t0 = performance.now();
@@ -207,9 +210,11 @@ async function main() {
     console.log(`  Bots listos en la sala ${code}. Arma equipos e inicia desde el panel; Ctrl+C para salir.`);
     while (modState?.phase !== 'running') await sleep(500);
   } else {
-    await emitAck(mod, 'mod:autoAssign', { teamCount: 0 });
-    await sleep(300);
-    console.log(`  ${modState?.teams.length ?? '?'} equipos armados; iniciando partida…`);
+    if (MODE === 'teams') {
+      await emitAck(mod, 'mod:autoAssign', { teamCount: 0 });
+      await sleep(300);
+      console.log(`  ${modState?.teams.length ?? '?'} equipos armados; iniciando partida…`);
+    } else console.log('  Iniciando el Caos…');
     await emitAck(mod, 'mod:start', {});
   }
   const startedAt = performance.now();
@@ -251,7 +256,8 @@ async function main() {
   if (results) {
     console.log('\n  Ranking:');
     for (const r of results.teams) {
-      console.log(`    ${String(r.position).padStart(2)}. ${r.name.padEnd(22)} C${r.lock}  ${r.correct}/${r.total}  vel ${r.breakdown.speed}  nota ${r.grade}${r.tiebreak ? `  (${r.tiebreak})` : ''}`);
+      const where = r.solo ? `${r.closedBy === 'eliminated' ? 'eliminado' : r.opened ? 'sobrevivió' : 'en pie'}` : `C${r.lock}`;
+      console.log(`    ${String(r.position).padStart(2)}. ${r.name.padEnd(22)} ${where}  ${r.correct}/${r.total}  vel ${r.breakdown.speed}  nota ${r.grade}${r.tiebreak ? `  (${r.tiebreak})` : ''}`);
     }
     const seqs = results.teams.filter((r) => r.opened).map((r) => r.finishSeq).sort((a, b) => a - b);
     const unique = new Set(seqs).size === seqs.length && seqs.every((s, i) => s === i + 1);
